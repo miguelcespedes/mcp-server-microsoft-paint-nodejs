@@ -1,5 +1,5 @@
 {
-  "name": "mcp-example",
+  "name": "mcp-server-microsoft-paint-nodejs",
   "version": "1.0.0",
   "type": "module",
   "main": "index.js",
@@ -7,10 +7,12 @@
     "dev": "tsx src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
+    "test": "node --test --test-concurrency=1 \"test/*.test.mjs\"",
     "inspect": "npx @modelcontextprotocol/inspector tsx src/server.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "koffi": "^3.1.4",
     "zod": "^4.0.0"
   },
   "devDependencies": {
@@ -18,5 +20,8 @@
     "@types/node": "^24.0.0",
     "tsx": "^4.0.0",
     "typescript": "^6.0.0"
+  },
+  "allowScripts": {
+    "koffi@3.1.4": true
   }
 }
