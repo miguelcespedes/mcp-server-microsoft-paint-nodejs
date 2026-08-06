@@ -1,9 +1,9 @@
 ﻿/**
- * Operación "Dibujo Libre": una o varias pinceladas (trazos), cada una con
+ * Operación "Freehand": uno o más strokes, cada uno con
  * un único arrastre del mouse.
  *
  * Formato PROVISIONAL en JSON hasta que llegue la especificación definitiva:
- *   {"trazos": [{"puntos": [{"x": 0, "y": 0}, {"x": 100, "y": 50}, ...]}, ...]}
+ *   {"strokes": [{"points": [{"x": 0, "y": 0}, {"x": 100, "y": 50}, ...]}, ...]}
  *
  * Cada llamada crea su propia instancia de ventana de Paint
  * (paint.createWindow()) con un lienzo limpio: los dibujos de llamadas
@@ -25,34 +25,33 @@ export function registerFreehand(
   paint: PaintPort,
 ): void {
   server.registerTool(
-    "paint_draw_libre",
+    "paint_draw_freehand",
     {
-      title: "Dibujo Libre",
+      title: "Freehand Drawing",
       description:
-        "Dibuja un dibujo libre en el lienzo de Microsoft Paint: una o " +
-        "varias pinceladas (trazos), cada una con un único arrastre del " +
+        "Draws freehand content on the Microsoft Paint canvas: one or " +
+        "more strokes, each one drawn with a single mouse drag. " +
         "mouse. Cada llamada abre una ventana NUEVA de Paint con lienzo " +
         "limpio (si Paint ya estaba abierto, abre otra ventana). " +
-        "Las coordenadas son relativas al lienzo (área dibujable de Paint), " +
-        "NO al área cliente. Formato del JSON (provisional, pendiente de " +
-        'especificación): {"trazos": [{"puntos": [{"x": 0, "y": 0}, ...]}, ...]}. ' +
-        "Si se prefiere la herramienta Lápiz, pasar " +
-        "skipToolSelection=false. Solo funciona en Windows. " +
-        'Ejemplo de JSON: {"trazos": [{"puntos": [{"x": 100, "y": 100}, ' +
+        "Coordinates are relative to the Paint canvas, NOT the client area. " +
+        'JSON format: {"strokes": [{"points": [{"x": 0, "y": 0}, ...]}, ...]}. ' +
+        "If you want the Pencil tool, pass skipToolSelection=false. " +
+        "Windows only. " +
+        'Example JSON: {"strokes": [{"points": [{"x": 100, "y": 100}, ' +
         '{"x": 200, "y": 300}, {"x": 300, "y": 100}, {"x": 400, "y": 300}, ' +
-        '{"x": 500, "y": 100}]}, {"puntos": [{"x": 550, "y": 300}, ' +
+        '{"x": 500, "y": 100}]}, {"points": [{"x": 550, "y": 300}, ' +
         '{"x": 650, "y": 100}]}], "stepDelayMs": 10}',
       inputSchema: {
-        trazos: z
+        strokes: z
           .array(
             z.object({
-              puntos: z
+              points: z
                 .array(pointSchema)
                 .min(2)
                 .max(1000)
                 .describe(
-                  "Puntos del trazo en orden de trazado (entre 2 y 1000). " +
-                    'Formato JSON: [{"x": 0, "y": 0}, {"x": 100, "y": 50}, ...]',
+                  "Stroke points in drawing order (between 2 and 1000). " +
+                    'JSON format: [{"x": 0, "y": 0}, {"x": 100, "y": 50}, ...]',
                 ),
             }),
           )
@@ -60,7 +59,7 @@ export function registerFreehand(
           .max(100)
           .default([
             {
-              puntos: [
+              points: [
                 { x: 100, y: 100 },
                 { x: 200, y: 300 },
                 { x: 300, y: 100 },
@@ -69,17 +68,17 @@ export function registerFreehand(
               ],
             },
             {
-              puntos: [
+              points: [
                 { x: 550, y: 300 },
                 { x: 650, y: 100 },
               ],
             },
           ])
           .describe(
-            "Trazos del dibujo en orden de trazado (entre 1 y 100). " +
-              "Opcional: si no se pasan, se dibuja el ejemplo en zigzag " +
-              "(el Inspector pre-rellena este valor). " +
-              'Formato JSON: [{"puntos": [...]}, {"puntos": [...]}, ...]',
+            "Drawing strokes in drawing order (between 1 and 100). " +
+              "Optional: if omitted, a zigzag demo is drawn " +
+              "(the Inspector pre-fills this value). " +
+              'JSON format: [{"points": [...]}, {"points": [...]}, ...]',
           ),
         stepDelayMs: stepDelayMsSchema,
         skipToolSelection: skipToolSelectionSchema,
@@ -88,7 +87,7 @@ export function registerFreehand(
     async (args) => {
       try {
         const window = await paint.createWindow();
-        const result = await window.drawFreehand(args.trazos, {
+        const result = await window.drawFreehand(args.strokes, {
           stepDelayMs: args.stepDelayMs,
           skipToolSelection: args.skipToolSelection,
         });
@@ -97,16 +96,16 @@ export function registerFreehand(
             {
               type: "text",
               text:
-                `Dibujo libre completado: ${result.strokeCount} trazos, ` +
-                `${result.totalPoints} puntos en "${result.windowTitle}" ` +
-                `(HWND ${result.windowHandle}, ventana ${result.createdBy}).` +
-                (result.warning ? ` Aviso: ${result.warning}` : ""),
+                `Freehand drawing completed: ${result.strokeCount} strokes, ` +
+                `${result.totalPoints} points in "${result.windowTitle}" ` +
+                `(HWND ${result.windowHandle}, window ${result.createdBy}).` +
+                (result.warning ? ` Warning: ${result.warning}` : ""),
             },
           ],
           structuredContent: result,
         };
       } catch (error: unknown) {
-        return toolErrorResult("paint_draw_libre", error);
+        return toolErrorResult("paint_draw_freehand", error);
       }
     },
   );

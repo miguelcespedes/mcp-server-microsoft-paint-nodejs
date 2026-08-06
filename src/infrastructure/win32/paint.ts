@@ -25,7 +25,7 @@ import type {
   PaintWindowInfo,
   Point2D,
   PolylineResult,
-  Trazo,
+  Stroke,
   WindowCreationMethod,
 } from "../../domain/drawing.js";
 
@@ -398,57 +398,57 @@ function createPaintWindow(
     },
 
     async drawFreehand(
-      trazos: Trazo[],
+      strokes: Stroke[],
       options: DrawOptions,
     ): Promise<FreehandResult> {
       validateStepDelayMs(options.stepDelayMs);
 
       if (
-        !Array.isArray(trazos) ||
-        trazos.length < MIN_STROKES ||
-        trazos.length > MAX_STROKES
+        !Array.isArray(strokes) ||
+        strokes.length < MIN_STROKES ||
+        strokes.length > MAX_STROKES
       ) {
         throw new Error(
-          `trazos debe tener entre ${MIN_STROKES} y ${MAX_STROKES} trazos ` +
-            `(recibidos: ${trazos?.length ?? 0}).`,
+          `strokes debe tener entre ${MIN_STROKES} y ${MAX_STROKES} trazos ` +
+            `(recibidos: ${strokes?.length ?? 0}).`,
         );
       }
 
-      trazos.forEach((stroke, strokeIndex) => {
+      strokes.forEach((stroke, strokeIndex) => {
         if (
           stroke === null ||
           typeof stroke !== "object" ||
-          !Array.isArray(stroke.puntos)
+          !Array.isArray(stroke.points)
         ) {
           throw new Error(
-            `trazos[${strokeIndex}] debe ser un objeto con una lista "puntos" ` +
+            `strokes[${strokeIndex}] debe ser un objeto con una lista "points" ` +
               `(recibido: ${JSON.stringify(stroke)}).`,
           );
         }
         if (
-          stroke.puntos.length < MIN_POLYLINE_POINTS ||
-          stroke.puntos.length > MAX_POLYLINE_POINTS
+          stroke.points.length < MIN_POLYLINE_POINTS ||
+          stroke.points.length > MAX_POLYLINE_POINTS
         ) {
           throw new Error(
-            `trazos[${strokeIndex}].puntos debe tener entre ` +
+            `strokes[${strokeIndex}].points debe tener entre ` +
               `${MIN_POLYLINE_POINTS} y ${MAX_POLYLINE_POINTS} puntos ` +
-              `(recibidos: ${stroke.puntos.length}).`,
+              `(recibidos: ${stroke.points.length}).`,
           );
         }
-        stroke.puntos.forEach((point, pointIndex) =>
+        stroke.points.forEach((point, pointIndex) =>
           validateCoordinatePair(
             point,
-            `trazos[${strokeIndex}].puntos[${pointIndex}]`,
+            `strokes[${strokeIndex}].points[${pointIndex}]`,
           ),
         );
       });
 
       // Conversión de lienzo a área cliente y validación de límites.
-      const clientStrokes = trazos.map((stroke, strokeIndex) =>
+      const clientStrokes = strokes.map((stroke, strokeIndex) =>
         validateAndToClient(
           window,
-          stroke.puntos,
-          `trazos[${strokeIndex}].puntos`,
+          stroke.points,
+          `strokes[${strokeIndex}].points`,
         ),
       );
 
@@ -475,7 +475,7 @@ function createPaintWindow(
         windowHandle: info.windowHandle,
         windowTitle: window.title,
         createdBy,
-        strokeCount: trazos.length,
+        strokeCount: strokes.length,
         totalPoints,
         startScreen: screenStrokes[0][0],
         endScreen:

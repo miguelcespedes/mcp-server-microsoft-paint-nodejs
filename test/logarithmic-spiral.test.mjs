@@ -1,8 +1,7 @@
 /**
- * Test de integración de la operación "Espiral Logarítmica"
- * (paint_draw_espiral_logaritmica, fase 0°): no recibe argumentos y dibuja
- * la espiral r = 7·1.1^θ (6 vueltas) con los parámetros fijos de la
- * herramienta.
+ * Integration test for the "Logarithmic Spiral" operation
+ * (paint_draw_logarithmic_spiral, phase 0 deg): takes no arguments and draws
+ * the spiral r = 7·1.1^θ (6 turns) with the tool's fixed parameters.
  *
  * IMPORTANTE: mueve el mouse REAL de la sesión de Windows. Requiere build:
  *   npm run build
@@ -25,9 +24,9 @@ after(async () => {
   }
 });
 
-test("paint_draw_espiral_logaritmica dibuja la espiral (fase 0°)", async () => {
+test("paint_draw_logarithmic_spiral draws the spiral (phase 0 deg)", async () => {
   const result = await client.callTool({
-    name: "paint_draw_espiral_logaritmica",
+    name: "paint_draw_logarithmic_spiral",
     arguments: {},
   });
   const s = result.structuredContent;

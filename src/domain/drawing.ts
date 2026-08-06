@@ -14,9 +14,9 @@ export interface Point2D {
   y: number;
 }
 
-/** Pincelada: una lista de puntos dibujada con un único arrastre del mouse. */
-export interface Trazo {
-  puntos: Point2D[];
+/** Stroke: a list of points drawn with a single mouse drag. */
+export interface Stroke {
+  points: Point2D[];
 }
 
 /**
@@ -70,9 +70,9 @@ export type FreehandResult = {
   windowHandle: string;
   windowTitle: string;
   createdBy: WindowCreationMethod;
-  /** Número de trazos dibujados. */
+  /** Number of strokes drawn. */
   strokeCount: number;
-  /** Total de puntos entre todos los trazos. */
+  /** Total number of points across all strokes. */
   totalPoints: number;
   startScreen: Point2D;
   endScreen: Point2D;
@@ -92,9 +92,9 @@ export interface PaintWindow {
     points: Point2D[],
     options: DrawOptions,
   ): Promise<PolylineResult>;
-  /** Dibuja un dibujo libre: uno o varios trazos, cada uno con un arrastre. */
+  /** Draws one or more freehand strokes, each with a single drag. */
   drawFreehand(
-    trazos: Trazo[],
+    strokes: Stroke[],
     options: DrawOptions,
   ): Promise<FreehandResult>;
 }

@@ -1,143 +1,177 @@
-# mcp-server-microsoft-paint-nodejs — Automatización de Paint con Win32
+# MCP Server for Drawing in Microsoft Paint from Node.js
 
-Servidor MCP (Model Context Protocol) en Node.js y TypeScript con herramientas de automatización de Paint:
+[English](README.md) | [Español](README.es.md)
 
-- **`paint_draw_libre`**, **`paint_draw_polyline`** y **`paint_draw_espiral_logaritmica`** — automatización de Microsoft Paint usando la API Win32 (`user32.dll`) a través de [Koffi](https://koffi.dev/).
+This project exposes MCP (Model Context Protocol) tools that open Microsoft Paint and draw automatically from Node.js and TypeScript.
 
-> **Importante: la automatización de Paint funciona únicamente en Windows.**
-> Es una prueba de concepto (POC) educativa: la interacción con la ventana se hace
-> mediante funciones Win32 invocadas desde Node.js con Koffi. No se usan RobotJS,
-> Playwright, Puppeteer, AutoHotkey, ni captura/análisis visual de pantalla.
+Included tools:
 
-## Requisitos
+- `paint_draw_freehand`
+- `paint_draw_polyline`
+- `paint_draw_logarithmic_spiral`
 
-- Windows 10 u 11 (64 bits).
-- Node.js 18 o superior (probado con Node 24).
-- Microsoft Paint instalado (incluido en Windows).
+These tools automate Microsoft Paint through the Win32 API (`user32.dll`, `shell32.dll`) via [Koffi](https://koffi.dev/).
 
-## Instalación
+> Important: Paint automation only works on Windows.
+> This is an educational proof of concept. Window interaction is performed with Win32 calls from Node.js through Koffi. It does not use RobotJS, Playwright, Puppeteer, AutoHotkey, or screen capture / visual analysis.
+
+## Requirements
+
+- Windows 10 or 11 (64-bit)
+- Node.js 18 or later (tested with Node 24)
+- Microsoft Paint installed
+
+## Installation
 
 ```bash
 npm install
 ```
 
-Nota: Koffi compila un binario nativo en la instalación. Si usas `npm` con
-políticas de scripts restringidas, aprobá el script de instalación de Koffi:
+Koffi installs a native binary. If your npm setup restricts scripts, approve Koffi explicitly:
 
 ```bash
 npm approve-scripts koffi
 ```
 
-## Estructura del proyecto
+## Project Structure
 
-Patrón **hexagonal ligero**: el dominio es puro (no conoce Win32 ni MCP) y
-los adaptadores implementan/usan los contratos del dominio. El punto de
-composición es `src/server.ts`.
+Light hexagonal architecture: the domain is pure and does not know about MCP or Win32. The adapters live under `src/infrastructure/`. Composition happens in `src/server.ts`.
 
 ```text
 src/
-  server.ts                        # COMPOSICIÓN: crea el adaptador Win32 (PaintPort)
-                                   # y lo inyecta al registro de operaciones MCP
-  domain/                          # NÚCLEO puro (sin Win32 ni MCP)
-    drawing.ts                     # Tipos del dibujo y puerto PaintPort (contrato)
-    figures.ts                     # Matemática de figuras (funciones puras)
+  server.ts                        # Composition root
+  domain/
+    drawing.ts                     # Drawing types, PaintPort, PaintWindow
+    figures.ts                     # Pure math helpers for figures
   infrastructure/
-    win32/                         # ADAPTADOR de salida: implementa PaintPort con Win32
-      user32.ts                    # Tipos nativos, constantes y bindings de user32.dll (Koffi)
-      process.ts                   # Lógica genérica de Windows: procesos, ventanas, mouse
-      paint.ts                     # Motor de dibujo (driver): PaintPort sobre Win32
-    mcp/                           # ADAPTADOR de entrada: operaciones MCP
-      schemas.ts                   # Esquemas zod de entrada (point, stepDelayMs, ...)
-      errors.ts                    # Formateo de errores MCP (toolErrorResult)
-      registry.ts                  # Registro central de operaciones MCP
-      operations/                  # 1 operación por archivo (solo operaciones)
-        freehand.operation.ts      # Operación: Dibujo Libre (paint_draw_libre)
-        polyline.operation.ts      # Operación: Dibujar polilínea (paint_draw_polyline)
-        logarithmic-spiral.operation.ts  # Operación (Ejemplo 1): Espiral Logarítmica
-  test/                            # Pruebas de integración (node:test, por operación)
-    helpers.mjs                    # Cliente MCP + generadores de figuras
-    logarithmic-spiral.test.mjs    # Test de la espiral (fase 0°)
-    polyline.test.mjs              # Test de polilínea (fase 120°)
-    freehand.test.mjs              # Test de dibujo libre (6 trazos, fase 240°)
+    win32/
+      user32.ts                    # user32.dll bindings and constants
+      shell.ts                     # shell32.dll binding (ShellExecuteW)
+      process.ts                   # Generic Windows helpers
+      paint.ts                     # Win32 Paint driver implementing PaintPort
+    mcp/
+      schemas.ts                   # Shared zod schemas
+      errors.ts                    # MCP tool error formatting
+      registry.ts                  # Registers all MCP operations
+      operations/
+        freehand.operation.ts
+        polyline.operation.ts
+        logarithmic-spiral.operation.ts
+test/
+  helpers.mjs                      # MCP client helpers + spiral generators
+  logarithmic-spiral.test.mjs
+  polyline.test.mjs
+  freehand.test.mjs
 ```
 
-Flujo de dependencias (una sola dirección):
+Dependency flow:
 
 ```text
-src/server.ts ──→ infrastructure/mcp/* (operaciones, esquemas zod)
-                        │
-                        ▼ (usa el puerto, nunca Win32 directo)
-                 domain/drawing.ts (PaintPort) ⇦── infrastructure/win32/paint.ts
-                        ▲
-                        │ (figuras puras)
-                 domain/figures.ts
+src/server.ts -> infrastructure/mcp/*
+                      |
+                      v
+               domain/drawing.ts <- infrastructure/win32/paint.ts
+                      ^
+                      |
+               domain/figures.ts
 ```
 
-- **El dominio** (`src/domain/`) no importa nada del exterior: solo tipos,
-  el puerto `PaintPort` (crea ventanas), la abstracción `PaintWindow`
-  (analogía `Ext.window.Window`: una instancia = una ventana con su lienzo)
-  y funciones puras de figuras (`logarithmicSpiral`, ...).
-- **Las operaciones MCP** (`src/infrastructure/mcp/`) reciben `PaintPort` por
-  inyección en su `register*(server, paint)`: cada llamada crea su propia
-  instancia (`const window = await paint.createWindow()`) y dibuja sobre
-  ella; solo definen nombre, descripción, esquema zod y handler.
-- **El adaptador Win32** (`src/infrastructure/win32/paint.ts`) es la única
-  implementación de `PaintPort`; `process.ts`/`user32.ts` son helpers genéricos.
-- **`src/server.ts`** cablea todo: crea `createWin32PaintDriver()` y se lo
-  pasa a `registerOperations(server, paint)`.
+## Running
 
-## Ejecución
-
-Desarrollo (con `tsx`):
+Development:
 
 ```bash
 npm run dev
 ```
 
-Compilar y ejecutar:
+Build and run:
 
 ```bash
 npm run build
 npm start
 ```
 
-## Agregar una operación
+## Sequence Diagram
 
-Patrón hexagonal del scaffolding: **cada operación MCP es un archivo
-`<nombre>.operation.ts` en `src/infrastructure/mcp/operations/`** que
-registra UNA herramienta contra el puerto `PaintPort`. Cada responsabilidad
-tiene su propio archivo dentro de `src/infrastructure/mcp/`: `schemas.ts`
-(esquemas zod), `errors.ts` (formateo de errores), `registry.ts` (registro
-central). El motor (`src/infrastructure/win32/paint.ts`) es genérico y no
-contiene dibujos concretos: las operaciones solo aportan esquema,
-descripción y registro; la matemática de cada figura vive en
-`src/domain/figures.ts` como función pura.
+End-to-end pipeline from an MCP call to actual drawing in Paint:
 
-Patrón de ventana (analogía `Ext.window.Window`): cada llamada crea su
-propia instancia de ventana con lienzo limpio:
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as MCP Client / Inspector
+    participant S as src/server.ts
+    participant O as MCP Operation
+    participant P as PaintPort / Win32 Driver
+    participant W as Win32 / Shell / user32
+    participant M as Paint Window
 
-```ts
-const window = await paint.createWindow(); // ventana NUEVA de Paint
-const result = await window.drawPolyline(points, { stepDelayMs: 8 });
+    C->>S: callTool(name, arguments)
+    S->>O: Registered tool handler
+    O->>P: paint.createWindow()
+
+    alt No Paint window is open
+        P->>W: spawnApplication("mspaint")
+        W-->>P: PID
+        P->>W: waitForWindowByPid(pid)
+    else Paint is already open
+        P->>W: enumerateWindows()
+        P->>W: spawnApplication("mspaint")
+        P->>W: waitForNewPaintWindow(before, 5s)
+        alt mspaint.exe does not create a new window
+            P->>W: ShellExecuteW(Paint AUMID)
+            P->>W: waitForNewPaintWindow(before, 5s)
+        end
+    end
+
+    W-->>P: WindowInfo (HWND, PID, title, class)
+    P->>M: maximizeWindow + bringWindowToFront
+    P->>M: wait PAINT_READY_DELAY_MS
+    P-->>O: PaintWindow
+
+    alt drawPolyline(points)
+        O->>P: window.drawPolyline(points, options)
+        P->>M: validate and convert canvas -> client -> screen
+        opt skipToolSelection === false
+            P->>M: click Pencil tool
+        end
+        P->>W: SetCursorPos + SendInput(single drag)
+    else drawFreehand(strokes)
+        O->>P: window.drawFreehand(strokes, options)
+        P->>M: validate and convert canvas -> client -> screen
+        opt skipToolSelection === false
+            P->>M: click Pencil tool
+        end
+        loop one drag per stroke
+            P->>W: SetCursorPos + SendInput(drag)
+        end
+    end
+
+    P-->>O: structured result
+    O-->>S: content + structuredContent
+    S-->>C: MCP response
 ```
 
-Pasos:
+Quick reading:
 
-1. Si la operación dibuja una figura, agrega su función pura en
-   `src/domain/figures.ts` (p. ej. `logarithmicSpiral`).
-2. Crea `src/infrastructure/mcp/operations/<nombre>.operation.ts` con una
-   función `register<Nombre>(server: McpServer, paint: PaintPort)` que llame
-   a `server.registerTool`.
-3. Define el esquema de entrada con zod (reutiliza `pointSchema`,
-   `skipToolSelectionSchema` y `stepDelayMsSchema` de `schemas.ts`; usa
-   `toolErrorResult` de `errors.ts` para los errores).
-4. En el handler, genera los puntos con la figura del dominio, crea su
-   ventana con `paint.createWindow()` y dibuja con
-   `window.drawPolyline(...)` / `window.drawFreehand(...)` — nunca Win32
-   directo.
-5. Regístrala en `src/infrastructure/mcp/registry.ts`.
+- MCP clients never talk to Win32 directly
+- each operation creates its own `PaintWindow`
+- the Win32 driver decides how to open or create the new Paint window
+- actual automation happens through Win32 APIs such as `ShellExecuteW`, window enumeration, `SetCursorPos`, and `SendInput`
+- tools return normal MCP responses with `structuredContent`
 
-Ejemplo mínimo:
+## Adding a New Operation
+
+Each MCP operation lives in its own `*.operation.ts` file under `src/infrastructure/mcp/operations/`.
+
+Typical flow:
+
+1. Add a pure figure helper to `src/domain/figures.ts` if needed.
+2. Create `src/infrastructure/mcp/operations/<name>.operation.ts`.
+3. Define input with zod schemas.
+4. In the handler, call `paint.createWindow()` and then `window.drawPolyline(...)` or `window.drawFreehand(...)`.
+5. Register the operation in `src/infrastructure/mcp/registry.ts`.
+
+Minimal example:
 
 ```ts
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -150,19 +184,19 @@ export function registerLogarithmicSpiral(
   paint: PaintPort,
 ): void {
   server.registerTool(
-    "paint_draw_espiral_logaritmica",
-    { title: "Espiral Logarítmica", description: "...", inputSchema: {} },
+    "paint_draw_logarithmic_spiral",
+    { title: "Logarithmic Spiral", description: "...", inputSchema: {} },
     async () => {
       try {
         const points = logarithmicSpiral(SPIRAL_PARAMS);
         const window = await paint.createWindow();
         const result = await window.drawPolyline(points, { stepDelayMs: 8 });
         return {
-          content: [{ type: "text", text: "Listo." }],
+          content: [{ type: "text", text: "Done." }],
           structuredContent: result,
         };
       } catch (error: unknown) {
-        return toolErrorResult("paint_draw_espiral_logaritmica", error);
+        return toolErrorResult("paint_draw_logarithmic_spiral", error);
       }
     },
   );
@@ -175,124 +209,64 @@ export function registerLogarithmicSpiral(
 npm run inspect
 ```
 
-Se abrirá una interfaz web. Conecta con el servidor y prueba las herramientas:
-empieza con `paint_draw_espiral_logaritmica` (sin argumentos) y sigue con
-`paint_draw_libre` y `paint_draw_polyline`. Recuerda que las herramientas de
-dibujo moverán el mouse real de tu sesión de Windows.
+Start with `paint_draw_logarithmic_spiral`, then try `paint_draw_freehand` and `paint_draw_polyline`.
 
-## Pruebas
+## Tests
 
-Pruebas de integración con el runner nativo de Node (`node:test`, sin
-dependencias extra): cada una arranca su propio servidor MCP y dibuja en
-Paint real, por lo que **mueven el mouse real de la sesión**. Por defecto
-cada operación dibuja en un lienzo nuevo, así que los tests no se superponen
-entre sí.
+Integration tests use Node's built-in test runner and draw on real Paint windows, so they move the real mouse and depend on the active Windows desktop session.
+
+Even though each operation creates its own Paint window, tests must run sequentially because they share the real mouse, Paint process, and Windows focus. That is why `npm test` uses `--test-concurrency=1`.
 
 ```bash
 npm run build
 npm test
 ```
 
-O un test en particular:
+Run a single test:
 
 ```bash
-node --test test/polyline.test.mjs
+node --test --test-concurrency=1 test/polyline.test.mjs
 ```
 
-```text
-test/
-  helpers.mjs                    # Cliente MCP + generadores de espiral compartidos
-  logarithmic-spiral.test.mjs    # paint_draw_espiral_logaritmica (fase 0°)
-  polyline.test.mjs              # paint_draw_polyline (fase 120°)
-  freehand.test.mjs              # paint_draw_libre (6 trazos, fase 240°)
-```
+## Tool Behavior
 
-## Uso de las herramientas
+### `paint_draw_logarithmic_spiral`
 
-### `paint_draw_espiral_logaritmica`
+Zero-argument example operation. It draws a logarithmic spiral `r = 1.1^theta` for 6 turns. It is the fastest way to verify the server from MCP Inspector.
 
-Ejemplo 1 — sin argumentos. Dibuja una espiral logarítmica `r = 1.1^θ`
-(6 vueltas) en el lienzo con `paint_draw_polyline`. Es la forma más rápida
-de probar el servidor desde el MCP Inspector: conectar → clic en
-`paint_draw_espiral_logaritmica` → "Call" → mira el lienzo. Vive en
-`src/infrastructure/mcp/operations/logarithmic-spiral.operation.ts`; la
-matemática de la figura es pura (`src/domain/figures.ts`) y el motor sigue
-sin dibujos concretos.
+### `paint_draw_freehand`
 
-### `paint_draw_libre`
+Freehand drawing: one or more strokes, each stroke drawn with a single mouse drag.
 
-Dibujo Libre: una o varias pinceladas (trazos), cada una con un único
-arrastre del mouse. **Cada llamada crea su propia ventana de Paint con
-lienzo limpio** (si Paint no estaba abierto, lo abre): los dibujos de
-llamadas distintas nunca se superponen.
+Parameters:
 
-| Parámetro   | Tipo  | Descripción                                              |
-| ----------- | ----- | -------------------------------------------------------- |
-| `trazos`    | array | 1–100 trazos `{puntos: [{x, y}, ...]}` (2–1000 puntos c/u). **Opcional**: si no se pasan se dibuja el ejemplo en zigzag (el Inspector pre-rellena este valor) |
-| `stepDelayMs`| int  | Retraso entre movimientos del mouse (0–200 ms, por defecto 10) |
-| `skipToolSelection` | bool | Opcional. `false` = selecciona la herramienta Lápiz antes de dibujar. Por defecto no toca el toolbar |
+- `strokes`: 1-100 strokes, each as `{ points: [{x, y}, ...] }`, 2-1000 points per stroke
+- `stepDelayMs`: integer, 0-200, default `10`
+- `skipToolSelection`: optional boolean; `false` selects the Pencil tool before drawing
 
-Formato del JSON (provisional, pendiente de especificación) — el JSON por
-defecto que el Inspector pre-rellena:
+Default Inspector payload:
 
 ```json
 {
-  "trazos": [
-    { "puntos": [{"x": 100, "y": 100}, {"x": 200, "y": 300}, {"x": 300, "y": 100}, {"x": 400, "y": 300}, {"x": 500, "y": 100}] },
-    { "puntos": [{"x": 550, "y": 300}, {"x": 650, "y": 100}] }
+  "strokes": [
+    { "points": [{"x": 100, "y": 100}, {"x": 200, "y": 300}, {"x": 300, "y": 100}, {"x": 400, "y": 300}, {"x": 500, "y": 100}] },
+    { "points": [{"x": 550, "y": 300}, {"x": 650, "y": 100}] }
   ],
   "stepDelayMs": 10
 }
 ```
 
-**Las coordenadas son relativas al lienzo (área dibujable) de Paint, NO al
-área cliente de la ventana.** Las operaciones fuerzan la ventana
-**maximizada**; en ese estado el lienzo queda centrado y empieza en
-un offset fijo del área cliente (`CANVAS_ORIGIN`, medido en Paint 11.2605 con
-la ventana maximizada). Internamente se suma ese offset antes de convertir a
-coordenadas absolutas de pantalla con `ClientToScreen`. Si dibujas cerca de la
-parte inferior y el trazo se corta, es porque el punto excede el tamaño del
-lienzo (892x723 px con el layout maximizado por defecto). La respuesta incluye
-`windowHandle` (HWND en hexadecimal) y `createdBy`, que indica cómo se creó
-la ventana de la operación: `opened` (Paint no estaba abierto y se lanzó),
-`launched` (Paint ya estaba abierto y `mspaint.exe` sí creó una ventana nueva)
-o `shell` (la instancia nueva se creó con `ShellExecuteW` sobre el AUMID de
-Paint porque `mspaint.exe` no produjo ventana).
-
-Secuencia interna de cada operación: `paint.createWindow()` (si Paint no
-estaba abierto se lanza; si ya estaba abierto se intenta crear una ventana
-nueva con `mspaint.exe` y, si no aparece, con `ShellExecuteW` sobre el
-AUMID de Paint; si ninguna estrategia funciona, error) → **maximizar la
-ventana** (el layout asume ventana maximizada) → llevarla al primer plano → convertir
-lienzo→área cliente (`CANVAS_ORIGIN`) → validar que los puntos estén dentro
-del área cliente → convertir a coordenadas de pantalla → `SetCursorPos` al
-inicio → `SendInput` (botón izquierdo + movimiento progresivo absoluto) →
-soltar el botón.
-
-> **Por defecto no se toca la barra de herramientas**: Paint inicia con la
-> herramienta **Brocha** (tinta negra), que dibuja con un arrastre normal del
-> botón izquierdo. La selección del Lápiz por clics en coordenadas resultó
-> poco fiable (depende del estado del ribbon y de otros desplegables), así que
-> solo se usa cuando el cliente lo pide explícitamente con
-> `skipToolSelection: false`.
-
 ### `paint_draw_polyline`
 
-Dibuja una polilínea (serie de puntos conectados) en **un único arrastre** del
-mouse. Ideal para curvas, espirales o dibujos generados: un solo arrastre es
-mucho más rápido y fluido que varios arrastres separados (una sola
-maximización, un solo clic inicial y un solo `SendInput`). **Cada llamada
-crea su propia ventana de Paint con lienzo limpio** (si Paint no estaba
-abierto, lo abre): los dibujos de llamadas distintas nunca se superponen.
+Draws a connected polyline with a single drag. Useful for curves, spirals, and generated figures.
 
-| Parámetro   | Tipo  | Descripción                                              |
-| ----------- | ----- | -------------------------------------------------------- |
-| `points`    | array | 2–1000 puntos `{x, y}` (enteros) en orden de trazado. **Opcional**: si no se pasan se dibuja un rectángulo de ejemplo (el Inspector pre-rellena este valor) |
-| `stepDelayMs`| int  | Retraso entre movimientos del mouse (0–200 ms, por defecto 10) |
-| `skipToolSelection` | bool | Opcional. `false` = selecciona la herramienta Lápiz antes de dibujar. Por defecto no toca el toolbar |
+Parameters:
 
-Las coordenadas son relativas al lienzo, igual que en `paint_draw_libre`.
-Ejemplo — rectángulo (el JSON por defecto que el Inspector pre-rellena):
+- `points`: 2-1000 `{x, y}` points
+- `stepDelayMs`: integer, 0-200, default `10`
+- `skipToolSelection`: optional boolean; `false` selects the Pencil tool before drawing
+
+Default Inspector payload:
 
 ```json
 {
@@ -301,82 +275,74 @@ Ejemplo — rectángulo (el JSON por defecto que el Inspector pre-rellena):
 }
 ```
 
-Con `stepDelayMs: 0` el arrastre no duerme entre movimientos (máxima
-velocidad); con valores altos se ve el trazo avanzar lentamente.
+## Paint Window Lifecycle
 
-## Funciones Win32 usadas
+Each tool call creates its own Paint window and returns metadata including:
 
-`FindWindowW`, `EnumWindows`, `GetWindowTextW`, `GetClassNameW`,
-`GetWindowThreadProcessId`, `GetForegroundWindow`, `IsWindow`,
-`IsWindowVisible`, `IsIconic`, `SetForegroundWindow`, `ShowWindow`,
-`AttachThreadInput`, `GetClientRect`, `ClientToScreen`, `SetCursorPos`,
-`GetSystemMetrics`, `SetProcessDpiAwarenessContext`, `SendInput` y
-`ShellExecuteW`. Los eventos de mouse se envían con `SendInput` (no con la
-API antigua `mouse_event`); el movimiento del arrastre usa coordenadas
-absolutas normalizadas (`MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK`) para
-soportar multi-monitor.
+- `windowHandle`
+- `windowTitle`
+- `processId`
+- `createdBy`
 
-## Seguridad y validaciones
+`createdBy` can be:
 
-- Se comprueba que el `HWND` siga existiendo (`IsWindow`) antes de cada uso.
-- Se valida que las coordenadas no sean negativas y que el punto resultante
-  (lienzo + offset) quede dentro del área cliente de Paint: **la herramienta
-  no dibuja fuera de Paint**.
-- `stepDelayMs` se limita a 0–200 ms y `points`/`trazos` a 2–1000 puntos por trazo.
-- Si la ventana no puede ir al primer plano, se devuelve una advertencia en la
-  respuesta en lugar de fallar silenciosamente.
+- `opened`: Paint was not open, so a fresh window was opened
+- `launched`: Paint was already open and `mspaint.exe` created a new window
+- `shell`: `mspaint.exe` did not create a new window, so `ShellExecuteW` was used with the Paint AUMID
 
-## Limitaciones de esta POC
+Internal drawing pipeline:
 
-- **Solo Windows** (usa `user32.dll` directamente).
-- Mueve el mouse real de la sesión: mientras dibuja, no uses el mouse.
-- El primer plano de la ventana depende de las restricciones de Windows; se
-  usa `AttachThreadInput` para mejorarlo, pero puede fallar en sesiones no
-  interactivas o con elevación de privilegios (UIPI).
-- **Offsets de layout hardcodeados**: el origen del lienzo (`CANVAS_ORIGIN` =
-  (513, 220), lienzo centrado de 892x723) y la posición del botón "Lápiz"
-  (`PENCIL_BUTTON` = (328, 82), solo usado con `skipToolSelection: false`) se
-  midieron con UI Automation en Paint
-  **11.2605** (versión UWP de Windows 11) **con la ventana maximizada** en un
-  monitor de 1920 px lógicos al 125% de DPI. Si usas otra versión de Paint,
-  otro ancho de monitor o la ventana no se maximiza (p. ej. sesión sin
-  escritorio interactivo), ajusta las constantes en
-  `src/infrastructure/win32/paint.ts`.
-- **Conciencia DPI obligatoria**: el proceso se marca como *per-monitor DPI
-  aware* (`SetProcessDpiAwarenessContext`) al arrancar para que todas las
-  coordenadas sean físicas. Sin esto, Windows virtualiza las coordenadas de
-  los procesos DPI-unaware y el lienzo quedaría desplazado según la escala
-  del monitor.
-- La selección del Lápiz (opcional, `skipToolSelection: false`) es por clics
-  en coordenadas porque el Paint moderno no responde a los atajos de teclado
-  de herramientas. Es poco fiable: un desplegable abierto (p. ej. el de
-  "Seleccionar") o el ribbon desplazado absorben el clic y cambian la
-  herramienta equivocada. Por eso **por defecto no se toca el toolbar** y se
-  dibuja con la herramienta activa (Paint inicia con la Brocha, que dibuja
-  tinta con un arrastre normal).
-- Las coordenadas son relativas al lienzo; dibujar más allá del lienzo
-  (p. ej. `startY` > 720 con el layout maximizado por defecto) quedará
-  cortado o devolverá un error si sale del área cliente.
-- En Windows 11, `mspaint.exe` puede ser un stub de la app UWP; si no crea
-  ventana, se lanza la app moderna con `ShellExecuteW` sobre su AUMID. Si no
-  hay sesión interactiva activa esto puede fallar.
-- Las operaciones localizan la ventana por PID y, como respaldo, por clase
-  `MSPaintApp` o hosts UWP con "paint" en el título; si no hay ninguna,
-  abren Paint automáticamente.
-- No hay selección de color ni grosor: dibuja con el estado actual de Paint
-  (tinta negra de la herramienta activa).
-- Cada operación crea su propia ventana (patrón `Ext.window.Window`): si
-  Paint ya estaba abierto se intenta crear una ventana nueva lanzando
-  `mspaint.exe` y, si eso no abre una ventana, con `ShellExecuteW` sobre el
-  AUMID de Paint. Si ninguna estrategia crea una ventana nueva, la operación
-  devuelve un error en lugar de dibujar sobre una ventana existente. Las
-  ventanas creadas se acumulan: ciérralas manualmente.
+1. `paint.createWindow()`
+2. Maximize the window
+3. Bring it to the foreground
+4. Wait `PAINT_READY_DELAY_MS` so the canvas is actually ready
+5. Convert canvas coordinates to client coordinates using `CANVAS_ORIGIN`
+6. Validate bounds
+7. Convert to screen coordinates
+8. Draw with `SetCursorPos` and `SendInput`
 
-## Notas de implementación (Koffi)
+## Win32 APIs Used
 
-- Los handles (`HWND`, `HANDLE`) son punteros de 64 bits; Koffi los devuelve
-  como `BigInt` para no perder precisión y se muestran en hexadecimal.
-- `INPUT`/`MOUSEINPUT` se definen como structs con el layout exacto de x64
-  (40 bytes), incluyendo el padding de `dwExtraInfo` (`ULONG_PTR`).
-- `EnumWindows` usa un callback transitorio de Koffi (`koffi.proto`), válido
-  solo durante la llamada, que es exactamente el caso de uso.
+- `EnumWindows`
+- `GetWindowTextW`
+- `GetClassNameW`
+- `GetWindowThreadProcessId`
+- `GetForegroundWindow`
+- `IsWindow`
+- `IsWindowVisible`
+- `IsIconic`
+- `SetForegroundWindow`
+- `ShowWindow`
+- `AttachThreadInput`
+- `GetClientRect`
+- `ClientToScreen`
+- `SetCursorPos`
+- `GetSystemMetrics`
+- `SetProcessDpiAwarenessContext`
+- `SendInput`
+- `ShellExecuteW`
+
+## Safety and Validation
+
+- validates that the `HWND` still exists before using it
+- rejects negative coordinates
+- rejects points outside the Paint client area
+- limits `stepDelayMs` to `0-200`
+- limits points and strokes to controlled ranges
+- returns a warning if Windows does not allow the window to reach the foreground
+
+## Limitations
+
+- Windows only
+- moves the real mouse during drawing
+- depends on Windows foreground restrictions and an interactive desktop session
+- uses hardcoded layout offsets measured on a specific modern Paint build
+- optional Pencil selection is coordinate-based and less reliable than drawing with the already active tool
+- `mspaint.exe` can behave like a UWP stub on Windows 11, so the driver may need the `ShellExecuteW` fallback
+- Paint windows accumulate and must be closed manually
+
+## Koffi Notes
+
+- `HWND` and `HANDLE` are treated as 64-bit pointers and represented as `BigInt`
+- `INPUT` / `MOUSEINPUT` must match the exact x64 layout
+- `EnumWindows` uses a transient Koffi callback that is only valid during the call

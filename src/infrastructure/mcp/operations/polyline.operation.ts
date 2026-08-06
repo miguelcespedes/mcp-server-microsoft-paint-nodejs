@@ -1,7 +1,7 @@
 ﻿/**
- * Operación "Dibujar polilínea": una serie de puntos conectados con un
- * único arrastre del mouse. Es la primitiva base de las operaciones que
- * dibujan curvas, espirales o dibujos generados.
+ * Operation "Draw Polyline": a series of connected points drawn with a
+ * single mouse drag. It is the base primitive for curves, spirals, and other
+ * generated drawings.
  *
  * Cada llamada crea su propia instancia de ventana de Paint
  * (paint.createWindow()) con un lienzo limpio: los dibujos de llamadas
@@ -25,17 +25,16 @@ export function registerPolyline(
   server.registerTool(
     "paint_draw_polyline",
     {
-      title: "Dibujar polilínea en Paint",
+      title: "Draw Polyline in Paint",
       description:
-        "Dibuja una polilínea (una serie de puntos conectados) en el lienzo " +
-        "de Microsoft Paint con un ÚNICO arrastre del mouse: ideal para " +
-        "curvas, espirales o dibujos generados. Cada llamada abre una " +
-        "ventana NUEVA de Paint con lienzo limpio (si Paint ya estaba " +
-        "abierto, abre otra ventana). Las coordenadas son relativas al " +
-        "lienzo (área dibujable de Paint), NO al área cliente. Si se " +
-        "prefiere la herramienta Lápiz, pasar skipToolSelection=false. " +
-        "Solo funciona en Windows. " +
-        'Ejemplo de JSON: {"points": [{"x": 200, "y": 100}, ' +
+        "Draws a polyline (a connected series of points) on the Microsoft " +
+        "Paint canvas using a SINGLE mouse drag. Ideal for curves, spirals, " +
+        "or generated drawings. Each call opens a NEW Paint window with a " +
+        "clean canvas (if Paint is already open, another window is created). " +
+        "Coordinates are relative to the Paint canvas, NOT the client area. " +
+        "If you want the Pencil tool, pass skipToolSelection=false. " +
+        "Windows only. " +
+        'Example JSON: {"points": [{"x": 200, "y": 100}, ' +
         '{"x": 600, "y": 100}, {"x": 600, "y": 500}, {"x": 200, "y": 500}], ' +
         '"stepDelayMs": 10}',
       inputSchema: {
@@ -50,10 +49,10 @@ export function registerPolyline(
             { x: 200, y: 500 },
           ])
           .describe(
-            "Puntos de la polilínea en orden de trazado (entre 2 y 1000). " +
-              "Opcional: si no se pasan, se dibuja un rectángulo de ejemplo " +
-              "(el Inspector pre-rellena este valor). " +
-              'Formato JSON: [{"x": 0, "y": 0}, {"x": 100, "y": 50}, ...]',
+            "Polyline points in drawing order (between 2 and 1000). " +
+              "Optional: if omitted, a demo rectangle is drawn " +
+              "(the Inspector pre-fills this value). " +
+              'JSON format: [{"x": 0, "y": 0}, {"x": 100, "y": 50}, ...]',
           ),
         stepDelayMs: stepDelayMsSchema,
         skipToolSelection: skipToolSelectionSchema,
@@ -71,10 +70,10 @@ export function registerPolyline(
             {
               type: "text",
               text:
-                `Polilínea dibujada con ${result.pointCount} puntos en ` +
+                `Polyline drawn with ${result.pointCount} points in ` +
                 `"${result.windowTitle}" (HWND ${result.windowHandle}, ` +
-                `ventana ${result.createdBy}).` +
-                (result.warning ? ` Aviso: ${result.warning}` : ""),
+                `window ${result.createdBy}).` +
+                (result.warning ? ` Warning: ${result.warning}` : ""),
             },
           ],
           structuredContent: result,

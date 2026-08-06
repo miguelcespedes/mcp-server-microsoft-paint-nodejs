@@ -1,8 +1,8 @@
 ﻿/**
- * Operación "Espiral Logarítmica" (Ejemplo 1): r = 1.1^θ, 6 vueltas.
+ * Operation "Logarithmic Spiral" (Example 1): r = 1.1^θ, 6 turns.
  *
- * No recibe argumentos: sirve como placeholder para probar el servidor
- * desde el Inspector. Cada llamada crea su propia instancia de ventana de
+ * Takes no arguments: serves as a placeholder for testing the server from
+ * Inspector. Each call creates its own Paint window instance with a clean
  * Paint (paint.createWindow()) con lienzo limpio. La matemática de la
  * figura vive en el dominio (src/domain/figures.ts) como función pura;
  * esta operación solo la usa y delega el dibujo a su instancia PaintWindow.
@@ -13,7 +13,7 @@ import type { PaintPort } from "../../../domain/drawing.js";
 import { logarithmicSpiral } from "../../../domain/figures.js";
 import { toolErrorResult } from "../errors.js";
 
-/** Parámetros del Ejemplo 1 (centro del lienzo maximizado: 892x723 px). */
+/** Parameters for Example 1 (center of the maximized 892x723 canvas). */
 const SPIRAL_PARAMS = {
   growth: 1.1,
   turns: 6,
@@ -27,15 +27,15 @@ export function registerLogarithmicSpiral(
   paint: PaintPort,
 ): void {
   server.registerTool(
-    "paint_draw_espiral_logaritmica",
+    "paint_draw_logarithmic_spiral",
     {
-      title: "Espiral Logarítmica",
+      title: "Logarithmic Spiral",
       description:
-        "Ejemplo 1: dibuja una espiral logarítmica r = 1.1^theta (6 vueltas) " +
-        "en el lienzo de Microsoft Paint con paint_draw_polyline. No recibe " +
-        "argumentos: es un placeholder para probar el servidor desde el " +
-        "Inspector. Cada llamada abre una ventana NUEVA de Paint con lienzo " +
-        "limpio. Solo funciona en Windows.",
+        "Example 1: draws a logarithmic spiral r = 1.1^theta (6 turns) " +
+        "on the Microsoft Paint canvas using paint_draw_polyline. It takes " +
+        "no arguments and is meant as a quick placeholder tool for the " +
+        "Inspector. Each call opens a NEW Paint window with a clean canvas. " +
+        "Windows only.",
       inputSchema: {},
     },
     async () => {
@@ -48,15 +48,15 @@ export function registerLogarithmicSpiral(
             {
               type: "text",
               text:
-                `Espiral logarítmica dibujada: ${result.pointCount} puntos ` +
-                `en "${result.windowTitle}" (HWND ${result.windowHandle}, ` +
-                `ventana ${result.createdBy}).`,
+                `Logarithmic spiral drawn: ${result.pointCount} points ` +
+                `in "${result.windowTitle}" (HWND ${result.windowHandle}, ` +
+                `window ${result.createdBy}).`,
             },
           ],
           structuredContent: result,
         };
       } catch (error: unknown) {
-        return toolErrorResult("paint_draw_espiral_logaritmica", error);
+        return toolErrorResult("paint_draw_logarithmic_spiral", error);
       }
     },
   );

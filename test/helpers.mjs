@@ -25,7 +25,7 @@ export async function createClient() {
   return client;
 }
 
-/** Puntos de la espiral logarítmica con fase inicial (rotación) en radianes. */
+/** Logarithmic spiral points with an initial phase (rotation) in radians. */
 export function spiralPoints(phaseRadians) {
   const points = [];
   const totalAngle = TURNS * 2 * Math.PI;
@@ -43,21 +43,21 @@ export function spiralPoints(phaseRadians) {
   return points;
 }
 
-/** La espiral dividida en trazos (uno por vuelta), con fase inicial. */
-export function spiralStrokesPerVuelta(phaseRadians) {
-  const trazos = [];
+/** The spiral split into strokes (one per turn), with an initial phase. */
+export function spiralStrokesPerTurn(phaseRadians) {
+  const strokes = [];
   for (let k = 0; k < TURNS; k += 1) {
     const from = phaseRadians + k * 2 * Math.PI;
     const to = phaseRadians + (k + 1) * 2 * Math.PI;
-    const puntos = [];
+    const points = [];
     for (let theta = from; theta <= to + 1e-9; theta += ANGLE_STEP) {
       const radius = SCALE * Math.pow(GROWTH, theta);
-      puntos.push({
+      points.push({
         x: Math.round(CENTER.x + radius * Math.cos(theta)),
         y: Math.round(CENTER.y + radius * Math.sin(theta)),
       });
     }
-    trazos.push({ puntos });
+    strokes.push({ points });
   }
-  return trazos;
+  return strokes;
 }
