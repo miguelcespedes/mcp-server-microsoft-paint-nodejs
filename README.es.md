@@ -34,7 +34,8 @@ src/
 
   domain/                          puro, sin dependencias
     drawing.ts                     tipos, contrato PaintPort, PaintWindow
-    figures.ts                     generadores matemáticos (puntos en coordenadas de lienzo)
+    figures.ts                     generadores matemáticos 2D + helpers de composición
+    solids.ts                      sólidos 3D en alambre (proyección, poliedros, toro, tesseract)
 
   paint/
     paint-controller.ts            orquestación de cada operación
@@ -83,8 +84,11 @@ La única herramienta productiva. Dos modos, todos validados con zod:
 
 Parámetros comunes:
 
-- `windowMode`: `"current"` (reutiliza la ventana de Paint abierta) o `"new"` (abre un lienzo limpio nuevo). Por defecto `"current"`.
+- `tool`: `"brush"` (por defecto, la herramienta activa de Paint) o `"pencil"` (selecciona el Lápiz en la barra de herramientas antes de dibujar — trazo fino, ideal para contornos y órbitas).
+- `fit`: `"none"` (por defecto, las coordenadas se usan tal cual), `"contain"` (escala y centra el dibujo dentro del lienzo preservando la proporción) o `"fill"` (lo estira para ocupar el lienzo). Se mantiene un margen del 5%. Con `fit` puedes diseñar en tu propio espacio de coordenadas sin conocer el tamaño del lienzo — el servidor lo conoce tras resolver la ventana.
 - `stepDelayMs`: retraso entre movimientos del mouse, 0–200 ms, por defecto 10.
+
+**Todo resultado** (`structuredContent`) incluye la geometría del `canvas` resuelto (`logicalWidth`/`logicalHeight`, orígenes, inset) y `canvasBounds`, la caja envolvente de lo que realmente se dibujó en coordenadas de lienzo — así el agente puede autoverificar sin otra llamada de debug.
 
 **Modo `generator` — el DSL.** Un generador es una unión discriminada por `kind`. Todas las coordenadas son relativas al lienzo (ver Resolver del lienzo abajo).
 
@@ -100,18 +104,52 @@ Parámetros comunes:
 | `logarithmicSpiral` | `cx`, `cy`, `growth` (1.1), `turns` (6), `angleStep` (0.05), `scale` (7) | polilínea |
 | `regularPolygon` | `cx`, `cy`, `radius`, `sides` (3–64), `rotationDeg` (-90) | polilínea cerrada |
 | `starPolygon` | `cx`, `cy`, `outerRadius`, `innerRadius`, `points` (3–32), `rotationDeg` (-90) | polilínea cerrada |
+| `grid` | `x` (0), `y` (0), `width`, `height`, `cols`, `rows`, `shape` (`circle`\|`disk`\|`rectangle`\|`ellipse`), `radius` (4), `itemWidth` (20), `itemHeight` (20), `stepCount` (24) | un stroke por ítem (mosaico, rejilla de tablero) |
+| `dotsAlongPath` | `path[]` (2–1000 de `{x, y}`), `radius` (3), `spacing` (16), `stepCount` (24) | un círculo pequeño por stroke, espaciados a lo largo del sendero |
 
-Composición: pasa `generators: [...]` (1–100) para dibujar figuras compuestas en una sola llamada — p. ej. una casa = `rectangle` + `regularPolygon`(3 lados). Un solo generador se dibuja con un arrastre; varios generadores se dibujan con un arrastre cada uno (`disk` se expande a varios trazos). La salida repite `generators` junto con el resultado del dibujo (info de la ventana, `pointCount`/`strokeCount`/`totalPoints`, `startScreen`, `endScreen`).
+`grid` repite una figura en una retícula de `cols` × `rows` centrada en la región `[x, y, width, height]` — un mosaico de puntos, una rejilla de casillas, una cuadrícula en todo el lienzo. `cols × rows` está limitado a 400. `dotsAlongPath` distribuye círculos pequeños a intervalos de `spacing` a lo largo de un sendero polilínea — los puntos de un corredor de Pac-Man o una ruta punteada; el número de círculos está limitado a 500 (sube `spacing` o acorta el sendero).
+
+**Sólidos 3D — proyección a alambre.** `src/domain/solids.ts` aporta matemática 3D pura (rotación X→Y→Z, proyección ortográfica/perspectiva) y los siguientes kinds, definidos centrados en el origen (se admiten coordenadas negativas; combínalos con `fit: "contain"`):
+
+| kind | Parámetros (valores por defecto entre paréntesis) | Resultado |
+|---|---|---|
+| `solid` | `solid` (`tetrahedron`\|`cube`\|`octahedron`\|`dodecahedron`\|`icosahedron`\|`greatIcosahedron`\|`starOctangula`\|`tesseract`), `size` (120), `rotX` (-20), `rotY` (25), `rotZ` (0), `projection` (`ortho`\|`perspective`), `perspectiveDistance` (3), `starFaces` (false) | un stroke de 2 puntos por arista (tesseract = 4D→3D→2D, 32 aristas) |
+| `torus` | `majorRadius` (100), `tubeRadius` (35), `segments` (16), `rings` (8), rotación/proyección | anillos de latitud + meridianos, un stroke cada uno |
+| `torusKnot` | `p` (2), `q` (3), `radius` (100), `tubeRadius` (30), `steps` (400), rotación/proyección | un stroke, curva 3D cerrada sobre un toro |
+| `revolution` | `profile[]` (2–100 de `{x = radio, y = altura}`), `segments` (16), rotación/proyección | anillos + meridianos de una superficie de revolución (jarrón, hiperboloide) |
+| `wireframe` | `vertices[]` (1–256 de `{x, y, z}`), `edges[]` (1–500 pares de índices), `size` (120), rotación/proyección | un stroke de 2 puntos por arista explícita (mallas low-poly) |
+
+`greatIcosahedron` comparte el esqueleto exacto del icosaedro (12 vértices / 30 aristas); `starFaces: true` añade sus 20 caras estrelladas que se cruzan (aproximación visual). La lista de `solid` cubre los sólidos platónicos más el poliedro estrellado de Kepler-Poinsot y el compuesto de la estrella octángula; `tesseract` proyecta 4D→3D con perspectiva (cámara a 2.5 en el eje w) y luego 3D→2D. Cada arista es un stroke de 2 puntos, muy por debajo del límite de 500 (dodecaedro: 30, tesseract: 32, toro 16×8: 24).
+
+Composición: pasa `generators: [...]` (1–100) para dibujar figuras compuestas en una sola llamada — p. ej. una casa = `rectangle` + `regularPolygon`(3 lados). Un solo generador se dibuja con un arrastre; varios generadores se dibujan con un arrastre cada uno (`disk`, `grid` y `dotsAlongPath` se expanden a varios trazos). La salida repite `generators` junto con el resultado del dibujo (info de la ventana, `pointCount`/`strokeCount`/`totalPoints`, `startScreen`, `endScreen`, `canvas`, `canvasBounds`).
+
+**Espacio de diseño + helpers de composición.** `src/domain/figures.ts` también exporta transformaciones puras — `translatePoints`, `scalePoints`, `rotatePoints`, `placePoints(angleDeg, radius, center)`, `boundingBox`, `fitStrokes` — para definir escenas en el origen y componerlas (p. ej. planetas colocados sobre órbitas) sin calcular coordenadas absolutas a mano.
 
 **Cómo funciona el DSL** — el pipeline completo:
 
 1. **Validación** — el JSON se valida con zod como unión discriminada por `kind`; aquí se aplican defaults y límites, así que una entrada inválida nunca llega al lienzo.
-2. **Puntos** — cada `kind` mapea a una función matemática pura de `src/domain/figures.ts` (sin efectos secundarios) que devuelve `Point2D[]` en coordenadas lógicas de lienzo: las curvas se aproximan con N puntos (`stepCount`/`stepDeg`), las formas cerradas repiten el primer punto, `disk` se expande a una fila de trazos para un aspecto relleno.
+2. **Puntos** — cada `kind` mapea a una función matemática pura de `src/domain/figures.ts` o `src/domain/solids.ts` (sin efectos secundarios) que devuelve `Point2D[]` en coordenadas lógicas de lienzo: las curvas se aproximan con N puntos (`stepCount`/`stepDeg`), las formas cerradas repiten el primer punto, `disk` se expande a una fila de trazos para un aspecto relleno, `grid`/`dotsAlongPath` emiten un stroke por ítem, y los kinds 3D emiten un stroke de 2 puntos por arista (o por anillo/meridiano).
 3. **Chequeo del lienzo** — cada punto debe caer dentro de los límites lógicos del lienzo (`DRAW_BOUNDS_OUTSIDE_CANVAS`).
 4. **Mapeo** — puntos lógicos → área dibujable (menos el inset de 8 px) → píxeles de cliente → píxeles de pantalla.
 5. **Arrastre** — un arrastre de mouse con `SendInput` por trazo (`dragPolyline`); el arrastre pasa por cada punto en orden.
 
-Ejemplo — una casa:
+Ver la [Galería de ejemplos](#galería-de-ejemplos) más abajo con llamadas listas para usar que cubren todas las familias de generadores.
+
+### `paint_debug_ui`
+
+Diagnóstico: inspecciona el árbol de UI Automation de Paint y resume grupos y controles. Parámetros: `maxDepth` (1–10, por defecto 6), `includeBoundingRectangles` (por defecto false), `filter` (insensible a mayúsculas, por defecto `"shape"`), `windowMode`. Devuelve `paint` (info), `uiLanguageHint`, `groups`, un resumen de `canvas` y los `elements` crudos.
+
+### `paint_debug_canvas`
+
+Diagnóstico: devuelve la geometría del lienzo activo — `source` (`automation` | `fixed-layout`), `width`/`height`, `logicalWidth`/`logicalHeight`, `clientOrigin`, `screenOrigin`, `drawableInset`, `elementName`, `automationId` — más el `activeCanvasElement` crudo. Úsala para entender dónde se está dibujando realmente.
+
+Todas las herramientas comparten el mismo comportamiento: se escribe una línea de log en stderr (`tool started/finished`) y un beep del sistema avisa de que la operación terminó. Las herramientas de debug además imprimen el resultado completo como JSON en `content.text`; `paint_draw` devuelve una frase resumen (el resultado estructurado siempre está disponible en `structuredContent`).
+
+## Galería de ejemplos
+
+Cada ejemplo es una sola llamada a `paint_draw`. Con `fit: "contain"` diseñas en tu propio espacio de coordenadas (negativas incluidas) y el servidor escala y centra el dibujo en el lienzo.
+
+### 1. Casa — composición 2D
 
 ```json
 {
@@ -123,15 +161,231 @@ Ejemplo — una casa:
 }
 ```
 
-### `paint_debug_ui`
+### 2. Sistema solar — `fit` + `tool: "pencil"`
 
-Diagnóstico: inspecciona el árbol de UI Automation de Paint y resume grupos y controles. Parámetros: `maxDepth` (1–10, por defecto 6), `includeBoundingRectangles` (por defecto false), `filter` (insensible a mayúsculas, por defecto `"shape"`), `windowMode`. Devuelve `paint` (info), `uiLanguageHint`, `groups`, un resumen de `canvas` y los `elements` crudos.
+Sol con `disk`, órbitas como círculos y planetas en ángulos; diseñado en el origen y ajustado a cualquier lienzo:
 
-### `paint_debug_canvas`
+```json
+{
+  "mode": "generator",
+  "tool": "pencil",
+  "fit": "contain",
+  "generators": [
+    { "kind": "disk", "cx": 0, "cy": 0, "radius": 25 },
+    { "kind": "circle", "cx": 0, "cy": 0, "radius": 80 },
+    { "kind": "circle", "cx": 0, "cy": 0, "radius": 130 },
+    { "kind": "circle", "cx": 0, "cy": 0, "radius": 180 },
+    { "kind": "circle", "cx": 80, "cy": 0, "radius": 4 },
+    { "kind": "circle", "cx": -130, "cy": 0, "radius": 7 }
+  ]
+}
+```
 
-Diagnóstico: devuelve la geometría del lienzo activo — `source` (`automation` | `fixed-layout`), `width`/`height`, `logicalWidth`/`logicalHeight`, `clientOrigin`, `screenOrigin`, `drawableInset`, `elementName`, `automationId` — más el `activeCanvasElement` crudo. Úsala para entender dónde se está dibujando realmente.
+### 3. Tablero de Pac-Man — `grid` + `dotsAlongPath`
 
-Todas las herramientas comparten el mismo comportamiento: se escribe una línea de log en stderr (`tool started/finished`) y un beep del sistema avisa de que la operación terminó. Las herramientas de debug además imprimen el resultado completo como JSON en `content.text`; `paint_draw` devuelve una frase resumen (el resultado estructurado siempre está disponible en `structuredContent`).
+Paredes del laberinto como rectángulos, puntos de los pasillos con `grid`, píldoras de poder como `disk` y una ruta punteada con `dotsAlongPath` (espacio de diseño `0..1000 × 0..600`):
+
+```json
+{
+  "mode": "generator",
+  "tool": "pencil",
+  "fit": "contain",
+  "generators": [
+    { "kind": "rectangle", "x": 20, "y": 20, "width": 960, "height": 560 },
+    { "kind": "rectangle", "x": 20, "y": 20, "width": 200, "height": 120 },
+    { "kind": "rectangle", "x": 780, "y": 20, "width": 200, "height": 120 },
+    { "kind": "rectangle", "x": 20, "y": 460, "width": 200, "height": 120 },
+    { "kind": "rectangle", "x": 780, "y": 460, "width": 200, "height": 120 },
+    { "kind": "grid", "x": 60, "y": 200, "width": 880, "height": 200, "cols": 22, "rows": 10, "shape": "circle", "radius": 3 },
+    { "kind": "disk", "cx": 100, "cy": 100, "radius": 12 },
+    { "kind": "disk", "cx": 900, "cy": 500, "radius": 12 },
+    { "kind": "dotsAlongPath", "path": [{ "x": 240, "y": 60 }, { "x": 760, "y": 60 }], "radius": 3, "spacing": 24 }
+  ]
+}
+```
+
+### 4. Composición de sólidos 3D — `solid` + `torus` + `torusKnot`
+
+Dodecaedro en perspectiva, tesseract en perspectiva 4D, toro y un nudo toroidal (2, 3):
+
+```json
+{
+  "mode": "generator",
+  "tool": "pencil",
+  "fit": "contain",
+  "generators": [
+    { "kind": "solid", "solid": "dodecahedron", "size": 100, "rotX": -20, "rotY": 25, "projection": "perspective" },
+    { "kind": "solid", "solid": "tesseract", "size": 110, "rotX": 15, "rotY": -30, "projection": "perspective" },
+    { "kind": "torus", "majorRadius": 90, "tubeRadius": 30, "segments": 16, "rings": 8 },
+    { "kind": "torusKnot", "p": 2, "q": 3, "radius": 80, "tubeRadius": 22, "steps": 400 }
+  ]
+}
+```
+
+### 5. Trazos libres — `freehand`
+
+`mode: "freehand"` con uno o más trazos (zigzag + línea base), cada uno con un único arrastre:
+
+```json
+{
+  "mode": "freehand",
+  "tool": "pencil",
+  "fit": "contain",
+  "strokes": [
+    {
+      "points": [
+        { "x": 0, "y": 60 },
+        { "x": 60, "y": 0 },
+        { "x": 120, "y": 60 },
+        { "x": 180, "y": 0 },
+        { "x": 240, "y": 60 }
+      ]
+    },
+    {
+      "points": [
+        { "x": 0, "y": 90 },
+        { "x": 240, "y": 90 }
+      ]
+    }
+  ]
+}
+```
+
+### 6. Tablero de damas — `grid` de rectángulos + círculos
+
+Dos grids sobre la misma región: las casillas del tablero y un punto en el centro de cada celda:
+
+```json
+{
+  "mode": "generator",
+  "tool": "pencil",
+  "fit": "contain",
+  "generators": [
+    { "kind": "grid", "x": 0, "y": 0, "width": 800, "height": 800, "cols": 8, "rows": 8, "shape": "rectangle", "itemWidth": 95, "itemHeight": 95 },
+    { "kind": "grid", "x": 0, "y": 0, "width": 800, "height": 800, "cols": 8, "rows": 8, "shape": "circle", "radius": 10 }
+  ]
+}
+```
+
+### 7. Rosa de los vientos — `starPolygon`, `regularPolygon`, `arc`, `logarithmicSpiral`
+
+Una mandala que mezcla los generadores 2D alrededor de un centro común:
+
+```json
+{
+  "mode": "generator",
+  "tool": "pencil",
+  "fit": "contain",
+  "generators": [
+    { "kind": "starPolygon", "cx": 0, "cy": 0, "outerRadius": 110, "innerRadius": 45, "points": 8, "rotationDeg": 22.5 },
+    { "kind": "regularPolygon", "cx": 0, "cy": 0, "radius": 120, "sides": 8, "rotationDeg": 22.5 },
+    { "kind": "circle", "cx": 0, "cy": 0, "radius": 140 },
+    { "kind": "logarithmicSpiral", "cx": 0, "cy": 0, "growth": 1.12, "turns": 2.5, "angleStep": 0.05, "scale": 5 },
+    { "kind": "arc", "cx": 0, "cy": 0, "radius": 160, "startDeg": 0, "endDeg": 270, "stepDeg": 6 }
+  ]
+}
+```
+
+### 8. Jarrón — superficie de `revolution`
+
+El perfil `{x = radio, y = altura}` se rota alrededor del eje Y en 16 segmentos:
+
+```json
+{
+  "mode": "generator",
+  "tool": "pencil",
+  "fit": "contain",
+  "generators": [
+    {
+      "kind": "revolution",
+      "profile": [
+        { "x": 15, "y": -70 },
+        { "x": 55, "y": -40 },
+        { "x": 75, "y": 0 },
+        { "x": 45, "y": 35 },
+        { "x": 65, "y": 60 },
+        { "x": 40, "y": 75 },
+        { "x": 8, "y": 80 }
+      ],
+      "segments": 16
+    }
+  ]
+}
+```
+
+### 9. Diamante low-poly — malla `wireframe`
+
+Vértices y aristas explícitos (pirámide superior, cuadrado central, pirámide inferior):
+
+```json
+{
+  "mode": "generator",
+  "tool": "pencil",
+  "fit": "contain",
+  "generators": [
+    {
+      "kind": "wireframe",
+      "vertices": [
+        { "x": 0, "y": 90, "z": 0 },
+        { "x": -45, "y": 0, "z": -45 },
+        { "x": 45, "y": 0, "z": -45 },
+        { "x": 45, "y": 0, "z": 45 },
+        { "x": -45, "y": 0, "z": 45 },
+        { "x": 0, "y": -90, "z": 0 }
+      ],
+      "edges": [
+        [0, 1], [0, 2], [0, 3], [0, 4],
+        [1, 2], [2, 3], [3, 4], [4, 1],
+        [1, 5], [2, 5], [3, 5], [4, 5]
+      ],
+      "size": 1.6,
+      "rotX": -20,
+      "rotY": 25
+    }
+  ]
+}
+```
+
+### 10. Poliedro estrellado — `greatIcosahedron` con `starFaces`
+
+Poliedro estrellado de Kepler-Poinsot en perspectiva: el esqueleto exacto de 30 aristas más las 20 caras estrelladas que se cruzan:
+
+```json
+{
+  "mode": "generator",
+  "tool": "pencil",
+  "fit": "contain",
+  "generators": [
+    { "kind": "solid", "solid": "greatIcosahedron", "starFaces": true, "projection": "perspective" }
+  ]
+}
+```
+
+### 11. Ruta punteada — `dotsAlongPath`
+
+Círculos pequeños distribuidos a lo largo de un sendero polilínea (22 puntos en ~410 px):
+
+```json
+{
+  "mode": "generator",
+  "tool": "pencil",
+  "fit": "contain",
+  "generators": [
+    {
+      "kind": "dotsAlongPath",
+      "path": [
+        { "x": 0, "y": 0 },
+        { "x": 120, "y": 40 },
+        { "x": 200, "y": 0 },
+        { "x": 300, "y": 60 },
+        { "x": 400, "y": 20 }
+      ],
+      "radius": 4,
+      "spacing": 18
+    }
+  ]
+}
+```
 
 ## El resolver del lienzo
 
@@ -207,4 +461,4 @@ npm run build
 npm test
 ```
 
-Los tests unitarios (`test/unit/*.test.mjs`) cubren la validación de puntos del lienzo, el mapeo de coordenadas con insets y la serialización de handles de ventana. No abren ventanas reales de Paint.
+Los tests unitarios (`test/unit/*.test.mjs`) cubren la matemática de figuras 2D y los helpers de composición (`figures.test.mjs`), los sólidos 3D en alambre — conteos de vértices/aristas, longitudes de aristas exactas, proyección en perspectiva, tesseract, toro, nudo toroidal, revolución y mallas wireframe genéricas (`solids.test.mjs`) — además de la validación de puntos del lienzo, el mapeo de coordenadas con insets y la serialización de handles de ventana. No abren ventanas reales de Paint.

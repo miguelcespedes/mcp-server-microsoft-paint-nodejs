@@ -14,6 +14,14 @@ export interface Point2D {
   y: number;
 }
 
+/** Caja envolvente en coordenadas de lienzo. */
+export interface BoundingBox {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
 /** Stroke: a list of points drawn with a single mouse drag. */
 export interface Stroke {
   points: Point2D[];
@@ -91,6 +99,10 @@ export type PolylineResult = {
   pointCount: number;
   startScreen: Point2D;
   endScreen: Point2D;
+  /** Geometría del lienzo resuelto en el momento del dibujo. */
+  canvas: PaintCanvasInfo;
+  /** Caja envolvente del contenido dibujado, en coordenadas de lienzo. */
+  canvasBounds: BoundingBox | null;
   warning?: string;
 };
 
@@ -106,6 +118,10 @@ export type FreehandResult = {
   totalPoints: number;
   startScreen: Point2D;
   endScreen: Point2D;
+  /** Geometría del lienzo resuelto en el momento del dibujo. */
+  canvas: PaintCanvasInfo;
+  /** Caja envolvente del contenido dibujado, en coordenadas de lienzo. */
+  canvasBounds: BoundingBox | null;
   warning?: string;
 };
 

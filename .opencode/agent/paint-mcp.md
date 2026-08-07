@@ -25,8 +25,13 @@ Rules:
   - `paint_debug_ui`
   - `paint_debug_canvas`
 - For productive flows, prefer `paint_draw` with the generator DSL:
-  - `mode: "generator"` with `generators[]` for compound figures (ellipse, circle, disk, arc, rectangle, roundedRectangle, polyline, logarithmicSpiral, regularPolygon, starPolygon).
+  - `mode: "generator"` with `generators[]` for compound figures (ellipse, circle, disk, arc, rectangle, roundedRectangle, polyline, logarithmicSpiral, regularPolygon, starPolygon, grid, dotsAlongPath).
+  - `grid` repeats a figure across a `cols` × `rows` lattice in a region — mosaics of dots or board cells in one call; `dotsAlongPath` scatters small circles along a polyline path (Pac-Man corridor dots). Both count as multiple strokes each.
+  - 3D wireframe solids: `solid` (tetrahedron, cube, octahedron, dodecahedron, icosahedron, greatIcosahedron, starOctangula, tesseract), `torus`, `torusKnot`, `revolution`, `wireframe` (explicit vertices/edges for low-poly). Defined centered at the origin — always pair them with `fit: "contain"` and prefer `tool: "pencil"`; one stroke per edge.
   - `mode: "freehand"` for free strokes.
+  - Use `tool: "pencil"` for thin strokes (orbits, outlines); default is the Brush.
+  - Use `fit: "contain"` (or `"fill"`) when the drawing should adapt to any canvas: design in your own coordinates and let the server scale/center. With `fit` you do not need to know the canvas size in advance.
+  - Self-verify from the result: every draw response includes the resolved `canvas` geometry and `canvasBounds` (bounding box of what was drawn). Avoid an extra `paint_debug_canvas` call just for the canvas size.
 - Keep all diagnostic reasoning grounded in the actual MCP responses observed in-session.
 - If the MCP tools are not available in the current session, say so explicitly instead of pretending to use them.
 
@@ -35,4 +40,4 @@ Typical debug flow:
 1. Inspect the active canvas (`paint_debug_canvas`).
 2. Inspect the UI tree (`paint_debug_ui`) if the window state is unclear.
 3. Execute the drawing tool (`paint_draw`).
-4. Re-inspect the active canvas if needed.
+4. Check `canvasBounds` in the draw result; re-inspect the active canvas only if needed.

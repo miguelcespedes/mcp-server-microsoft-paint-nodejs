@@ -26,6 +26,7 @@ import {
 } from "../../paint/discovery/canvas-resolver.js";
 import { discoverPaintInventory } from "../../paint/discovery/paint-ui-inventory.js";
 import type {
+  BoundingBox,
   DrawingRegion,
   PaintCanvasInfo,
   PaintWindowOptions,
@@ -70,7 +71,7 @@ const PAINT_UWP_AUMID = "shell:AppsFolder\\Microsoft.Paint_8wekyb3d8bbwe!App";
 const MIN_POLYLINE_POINTS = 2;
 const MAX_POLYLINE_POINTS = 1_000;
 const MIN_STROKES = 1;
-const MAX_STROKES = 100;
+const MAX_STROKES = 500;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Identificación de ventanas de Paint
@@ -362,6 +363,23 @@ async function createPaintWindow(
     });
   }
 
+  function computeCanvasBounds(points: Point2D[]): BoundingBox | null {
+    if (points.length === 0) {
+      return null;
+    }
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const point of points) {
+      minX = Math.min(minX, point.x);
+      minY = Math.min(minY, point.y);
+      maxX = Math.max(maxX, point.x);
+      maxY = Math.max(maxY, point.y);
+    }
+    return { minX, minY, maxX, maxY };
+  }
+
   async function refreshCanvas(): Promise<PaintCanvas> {
     try {
       const discovered = await discoverPaintInventory(
@@ -474,6 +492,8 @@ async function createPaintWindow(
         pointCount: points.length,
         startScreen: screenPoints[0],
         endScreen: screenPoints[screenPoints.length - 1],
+        canvas: toCanvasInfo(canvas),
+        canvasBounds: computeCanvasBounds(mappedPoints),
         ...(prepared.focus.success ? {} : { warning: prepared.focus.warning }),
       };
     },
@@ -531,14 +551,17 @@ async function createPaintWindow(
 
       const canvas = prepared.canvas;
 
-      const clientStrokes = strokes.map((stroke, strokeIndex) =>
+      const canvasStrokes = strokes.map((stroke, strokeIndex) =>
+        mapPointsIntoDrawingRegion(
+          stroke.points,
+          canvas,
+          `strokes[${strokeIndex}].points`,
+        ),
+      );
+      const clientStrokes = canvasStrokes.map((points, strokeIndex) =>
         canvasPointsToClientPoints(
           canvas,
-          mapPointsIntoDrawingRegion(
-            stroke.points,
-            canvas,
-            `strokes[${strokeIndex}].points`,
-          ),
+          points,
           `strokes[${strokeIndex}].points`,
         ),
       );
@@ -571,6 +594,8 @@ async function createPaintWindow(
           screenStrokes[screenStrokes.length - 1][
             screenStrokes[screenStrokes.length - 1].length - 1
           ],
+        canvas: toCanvasInfo(canvas),
+        canvasBounds: computeCanvasBounds(canvasStrokes.flat()),
         ...(prepared.focus.success ? {} : { warning: prepared.focus.warning }),
       };
     },

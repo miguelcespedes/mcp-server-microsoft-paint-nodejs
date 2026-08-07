@@ -21,17 +21,31 @@ export const pointSchema = z.object({
 });
 
 /**
- * Selección de herramienta: por defecto no se toca el toolbar y se dibuja
- * con la herramienta activa (Paint inicia con la Brocha); con false se
- * selecciona el Lápiz.
+ * Herramienta de dibujo: "brush" es la Brocha por defecto de Paint (no se
+ * toca el toolbar); "pencil" selecciona el Lápiz en la barra de herramientas
+ * antes de dibujar (trazo fino, ideal para contornos y órbitas).
  */
-export const skipToolSelectionSchema = z
-  .boolean()
-  .optional()
+export const toolSchema = z
+  .enum(["brush", "pencil"])
+  .default("brush")
   .describe(
-    "Si es false, se selecciona la herramienta Lápiz en la barra de " +
-      "herramientas antes de dibujar. Por defecto no se toca el toolbar: " +
-      "se dibuja con la herramienta activa (Paint inicia con la Brocha).",
+    "Herramienta de dibujo: 'brush' (Brocha, por defecto) o 'pencil' " +
+      "(Lápiz, trazo fino; se selecciona en la barra de herramientas antes " +
+      "de dibujar).",
+  );
+
+/**
+ * Ajuste del dibujo al lienzo: "none" usa las coordenadas tal cual,
+ * "contain" escala y centra el dibujo dentro del lienzo preservando la
+ * proporción, y "fill" lo estira hasta ocuparlo.
+ */
+export const fitSchema = z
+  .enum(["none", "contain", "fill"])
+  .default("none")
+  .describe(
+    "Ajuste del dibujo al lienzo: 'none' (coordenadas tal cual), 'contain' " +
+      "(escala y centra preservando proporción) o 'fill' (estira para " +
+      "ocupar el lienzo).",
   );
 
 /** Retraso entre movimientos del mouse (0–200 ms, por defecto 10). */
