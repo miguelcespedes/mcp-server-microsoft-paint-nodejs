@@ -42,7 +42,7 @@ import {
   stepDelayMsSchema,
   toolSchema,
 } from "../schemas.js";
-import type { PaintCanvasInfo, Stroke } from "../../../domain/drawing.js";
+import type { PaintCanvasInfo, Point2D, Stroke } from "../../../domain/drawing.js";
 
 const drawModeSchema = z.enum(["freehand", "generator"]);
 
@@ -778,6 +778,7 @@ export function registerPaintDraw(
           .default({ kind: "ellipse", x: 100, y: 120, width: 300, height: 180, stepCount: 72 }),
         generators: generatorListSchema.optional(),
         stepDelayMs: stepDelayMsSchema,
+        origin: pointSchema.optional().describe("Origen global (offset) aplicado a todas las coordenadas de los generadores. Default: {0,0}."),
       },
     },
     async (args) => {
@@ -809,11 +810,46 @@ export function registerPaintDraw(
           };
         }
 
+        function applyOriginToGenerator(generator: z.infer<typeof generatorSchema>, origin: Point2D) {
+  if (origin.x === 0 && origin.y === 0) {
+    return generator;
+  }
+  const g = { ...generator } as any;
+  switch (generator.kind) {
+    case "ellipse":
+    case "rectangle":
+    case "roundedRectangle":
+    case "grid":
+      g.x = (g.x ?? 0) + origin.x;
+      g.y = (g.y ?? 0) + origin.y;
+      break;
+    case "circle":
+    case "disk":
+    case "arc":
+    case "logarithmicSpiral":
+    case "regularPolygon":
+    case "starPolygon":
+      g.cx = (g.cx ?? 0) + origin.x;
+      g.cy = (g.cy ?? 0) + origin.y;
+      break;
+    case "polyline":
+      g.points = g.points.map((p: Point2D) => ({ x: p.x + origin.x, y: p.y + origin.y }));
+      break;
+    case "dotsAlongPath":
+      g.path = g.path.map((p: Point2D) => ({ x: p.x + origin.x, y: p.y + origin.y }));
+      break;
+    // 3D generators are centered at model origin, no 2D offset
+  }
+  return g;
+}
+
         const generators = args.generators ?? [args.generator];
+        const origin = args.origin ?? { x: 0, y: 0 };
+        const offsetGenerators = generators.map((g) => applyOriginToGenerator(g, origin));
 
         // P2: auto-resize canvas to match content aspect ratio when using fit
-        if ((args.fit === "contain" || args.fit === "fill") && generators.length > 0) {
-          const allStrokes = generators.flatMap((g) => generatorToStrokes(g));
+        if ((args.fit === "contain" || args.fit === "fill") && offsetGenerators.length > 0) {
+          const allStrokes = offsetGenerators.flatMap((g) => generatorToStrokes(g));
           const contentBox = boundingBox(allStrokes);
           if (contentBox) {
             const contentWidth = contentBox.maxX - contentBox.minX;
@@ -841,7 +877,7 @@ export function registerPaintDraw(
           }
         }
 
-        const allStrokes = generators.flatMap((generator) => generatorToStrokes(generator));
+        const allStrokes = offsetGenerators.flatMap((generator) => generatorToStrokes(generator));
         const strokes = fitStrokesToCanvas(
           allStrokes.map((points) => ({ points })),
           args.fit,
