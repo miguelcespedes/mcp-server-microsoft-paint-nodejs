@@ -6,18 +6,16 @@
 
 import { z } from "zod";
 
-/** Punto {x, y} en coordenadas de lienzo (enteros ≥ 0). */
+/** Punto {x, y} en el espacio de diseño (enteros; negativos permitidos con fit). */
 export const pointSchema = z.object({
   x: z
     .number()
     .int()
-    .min(0)
-    .describe("Coordenada X del punto, relativa al lienzo."),
+    .describe("Coordenada X del punto (puede ser negativa si se usa fit)."),
   y: z
     .number()
     .int()
-    .min(0)
-    .describe("Coordenada Y del punto, relativa al lienzo."),
+    .describe("Coordenada Y del punto (puede ser negativa si se usa fit)."),
 });
 
 /**
@@ -85,12 +83,13 @@ export const windowModeSchema = z
   .default("current")
   .describe("Whether to use the current Paint window or create a new one.");
 
-export const nonNegativeIntSchema = (name: string) =>
+export const relativeIntSchema = (name: string) =>
   z
     .number()
     .int()
-    .min(0)
-    .describe(`${name} in canvas-relative coordinates.`);
+    .describe(
+      `${name} in the design space (negative allowed; 'fit' maps it onto the canvas).`,
+    );
 
 export const positiveIntSchema = (name: string) =>
   z
@@ -99,13 +98,13 @@ export const positiveIntSchema = (name: string) =>
     .min(1)
     .describe(`${name} as a positive integer.`);
 
-export const ellipseXSchema = nonNegativeIntSchema("Ellipse X")
+export const ellipseXSchema = relativeIntSchema("Ellipse X")
   .default(100)
-  .describe("Ellipse X in canvas-relative coordinates. Default: 100.");
+  .describe("Ellipse X in design-space coordinates. Default: 100.");
 
-export const ellipseYSchema = nonNegativeIntSchema("Ellipse Y")
+export const ellipseYSchema = relativeIntSchema("Ellipse Y")
   .default(120)
-  .describe("Ellipse Y in canvas-relative coordinates. Default: 120.");
+  .describe("Ellipse Y in design-space coordinates. Default: 120.");
 
 export const ellipseWidthSchema = positiveIntSchema("Ellipse width")
   .default(300)

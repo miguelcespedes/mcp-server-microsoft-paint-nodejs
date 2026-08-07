@@ -1,4 +1,4 @@
-import { z } from "zod";
+﻿import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { PaintPort } from "../../../domain/drawing.js";
 import {
@@ -37,6 +37,7 @@ import {
   ellipseYSchema,
   fitSchema,
   pointSchema,
+  relativeIntSchema,
   stepDelayMsSchema,
   toolSchema,
 } from "../schemas.js";
@@ -48,8 +49,8 @@ const projectionSchema = z
   .enum(["ortho", "perspective"])
   .default("ortho")
   .describe(
-    "Proyección 3D→2D: 'ortho' (sin perspectiva) o 'perspective' " +
-      "(la cámara está a 'perspectiveDistance' del origen; lo cercano se agranda).",
+    "ProyecciÃ³n 3Dâ†’2D: 'ortho' (sin perspectiva) o 'perspective' " +
+      "(la cÃ¡mara estÃ¡ a 'perspectiveDistance' del origen; lo cercano se agranda).",
   );
 
 const rotXSchema = z
@@ -57,28 +58,28 @@ const rotXSchema = z
   .min(-360)
   .max(360)
   .default(-20)
-  .describe("Rotación sobre el eje X en grados (orden X → Y → Z).");
+  .describe("RotaciÃ³n sobre el eje X en grados (orden X â†’ Y â†’ Z).");
 
 const rotYSchema = z
   .number()
   .min(-360)
   .max(360)
   .default(25)
-  .describe("Rotación sobre el eje Y en grados (orden X → Y → Z).");
+  .describe("RotaciÃ³n sobre el eje Y en grados (orden X â†’ Y â†’ Z).");
 
 const rotZSchema = z
   .number()
   .min(-360)
   .max(360)
   .default(0)
-  .describe("Rotación sobre el eje Z en grados (orden X → Y → Z).");
+  .describe("RotaciÃ³n sobre el eje Z en grados (orden X â†’ Y â†’ Z).");
 
 const perspectiveDistanceSchema = z
   .number()
   .positive()
   .default(3)
   .describe(
-    "Distancia de la cámara al origen en unidades del modelo (proyección perspective).",
+    "Distancia de la cÃ¡mara al origen en unidades del modelo (proyecciÃ³n perspective).",
   );
 
 const solidNames = [
@@ -97,7 +98,7 @@ const revolutionProfilePointSchema = z.object({
     .number()
     .int()
     .min(0)
-    .describe("Distancia del punto al eje de rotación (radio)."),
+    .describe("Distancia del punto al eje de rotaciÃ³n (radio)."),
   y: z
     .number()
     .int()
@@ -115,22 +116,22 @@ const generatorSchema = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("circle"),
-    cx: z.number().int().min(0),
-    cy: z.number().int().min(0),
+    cx: relativeIntSchema("Center X"),
+    cy: relativeIntSchema("Center Y"),
     radius: z.number().int().min(1),
     stepCount: z.number().int().min(12).max(360).default(72),
   }),
   z.object({
     kind: z.literal("disk"),
-    cx: z.number().int().min(0),
-    cy: z.number().int().min(0),
+    cx: relativeIntSchema("Center X"),
+    cy: relativeIntSchema("Center Y"),
     radius: z.number().int().min(1),
     rowStep: z.number().int().min(1).max(20).default(4),
   }),
   z.object({
     kind: z.literal("arc"),
-    cx: z.number().int().min(0),
-    cy: z.number().int().min(0),
+    cx: relativeIntSchema("Center X"),
+    cy: relativeIntSchema("Center Y"),
     radius: z.number().int().min(1),
     startDeg: z.number(),
     endDeg: z.number(),
@@ -158,8 +159,8 @@ const generatorSchema = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("logarithmicSpiral"),
-    cx: z.number().int().min(0),
-    cy: z.number().int().min(0),
+    cx: relativeIntSchema("Center X"),
+    cy: relativeIntSchema("Center Y"),
     growth: z.number().positive().default(1.1),
     turns: z.number().int().min(1).max(20).default(6),
     angleStep: z.number().positive().max(1).default(0.05),
@@ -167,16 +168,16 @@ const generatorSchema = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("regularPolygon"),
-    cx: z.number().int().min(0),
-    cy: z.number().int().min(0),
+    cx: relativeIntSchema("Center X"),
+    cy: relativeIntSchema("Center Y"),
     radius: z.number().int().min(1),
     sides: z.number().int().min(3).max(64),
     rotationDeg: z.number().default(-90),
   }),
   z.object({
     kind: z.literal("starPolygon"),
-    cx: z.number().int().min(0),
-    cy: z.number().int().min(0),
+    cx: relativeIntSchema("Center X"),
+    cy: relativeIntSchema("Center Y"),
     outerRadius: z.number().int().min(1),
     innerRadius: z.number().int().min(1),
     points: z.number().int().min(3).max(32),
@@ -184,8 +185,8 @@ const generatorSchema = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("grid"),
-    x: z.number().int().min(0).default(0),
-    y: z.number().int().min(0).default(0),
+    x: relativeIntSchema("Grid X").default(0),
+    y: relativeIntSchema("Grid Y").default(0),
     width: z.number().int().min(1),
     height: z.number().int().min(1),
     cols: z.number().int().min(1).max(50),
@@ -199,7 +200,7 @@ const generatorSchema = z.discriminatedUnion("kind", [
     (grid) => grid.cols * grid.rows <= 400,
     {
       message:
-        "grid demasiado grande: cols × rows debe ser ≤ 400 (el dibujo " +
+        "grid demasiado grande: cols Ã— rows debe ser â‰¤ 400 (el dibujo " +
         "queda limitado a 500 trazos por llamada).",
       path: ["cols"],
     },
@@ -223,7 +224,7 @@ const generatorSchema = z.discriminatedUnion("kind", [
     },
     {
       message:
-        "dotsAlongPath generaría más de 500 círculos (el dibujo queda " +
+        "dotsAlongPath generarÃ­a mÃ¡s de 500 cÃ­rculos (el dibujo queda " +
         "limitado a 500 trazos por llamada). Aumenta 'spacing' o acorta el " +
         "sendero.",
       path: ["spacing"],
@@ -242,7 +243,7 @@ const generatorSchema = z.discriminatedUnion("kind", [
       .boolean()
       .default(false)
       .describe(
-        "Solo para greatIcosahedron: añade las 20 caras pentagrama que se " +
+        "Solo para greatIcosahedron: aÃ±ade las 20 caras pentagrama que se " +
           "cruzan (aprox. visual; el esqueleto de 30 aristas es el exacto).",
       ),
   }),
@@ -278,7 +279,7 @@ const generatorSchema = z.discriminatedUnion("kind", [
       .min(2)
       .max(100)
       .describe(
-        "Perfil del jarrón/curva en el plano: {x = distancia al eje (radio), " +
+        "Perfil del jarrÃ³n/curva en el plano: {x = distancia al eje (radio), " +
           "y = altura}. Se rota alrededor del eje Y.",
       ),
     segments: z.number().int().min(4).max(64).default(16),
@@ -300,12 +301,12 @@ const generatorSchema = z.discriminatedUnion("kind", [
       )
       .min(1)
       .max(256)
-      .describe("Vértices 3D de la malla (coordenadas del modelo)."),
+      .describe("VÃ©rtices 3D de la malla (coordenadas del modelo)."),
     edges: z
       .array(z.tuple([z.number().int().min(0), z.number().int().min(0)]))
       .min(1)
       .max(500)
-      .describe("Aristas como pares de índices de 'vertices'."),
+      .describe("Aristas como pares de Ã­ndices de 'vertices'."),
     size: z.number().positive().max(2000).default(120),
     rotX: rotXSchema,
     rotY: rotYSchema,
@@ -319,7 +320,7 @@ const generatorSchema = z.discriminatedUnion("kind", [
       ),
     {
       message:
-        "wireframe: los índices de 'edges' deben ser menores que la " +
+        "wireframe: los Ã­ndices de 'edges' deben ser menores que la " +
         "cantidad de 'vertices'.",
       path: ["edges"],
     },
@@ -506,21 +507,21 @@ export function registerPaintDraw(
       title: "Dibujar en Paint",
       description:
         "Herramienta productiva principal para dibujar en Paint. Soporta dos modos: " +
-        "'freehand' para uno o más strokes libres, y 'generator' para el DSL de " +
-        "generadores matemáticos (ellipse, circle, disk, arc, rectangle, " +
+        "'freehand' para uno o mÃ¡s strokes libres, y 'generator' para el DSL de " +
+        "generadores matemÃ¡ticos (ellipse, circle, disk, arc, rectangle, " +
         "roundedRectangle, regularPolygon, starPolygon, logarithmicSpiral, polyline, " +
-        "grid, dotsAlongPath) y de sólidos 3D proyectados a alambre (solid, torus, " +
-        "torusKnot, revolution, wireframe). 'grid' repite una figura en una retícula " +
-        "cols × rows (mosaico de círculos) y 'dotsAlongPath' distribuye círculos " +
-        "pequeños a lo largo de un sendero. Los sólidos 3D (poliedros regulares, " +
-        "gran icosaedro, estrella octángula, tesseract, toro, nudo toroidal, " +
-        "superficies de revolución y mallas wireframe genéricas) se definen " +
-        "centrados en el origen con rotaciones y proyección ortográfica o " +
+        "grid, dotsAlongPath) y de sÃ³lidos 3D proyectados a alambre (solid, torus, " +
+        "torusKnot, revolution, wireframe). 'grid' repite una figura en una retÃ­cula " +
+        "cols Ã— rows (mosaico de cÃ­rculos) y 'dotsAlongPath' distribuye cÃ­rculos " +
+        "pequeÃ±os a lo largo de un sendero. Los sÃ³lidos 3D (poliedros regulares, " +
+        "gran icosaedro, estrella octÃ¡ngula, tesseract, toro, nudo toroidal, " +
+        "superficies de revoluciÃ³n y mallas wireframe genÃ©ricas) se definen " +
+        "centrados en el origen con rotaciones y proyecciÃ³n ortogrÃ¡fica o " +
         "perspectiva; cada arista es un stroke. Opciones: 'tool' elige Brocha o " +
-        "Lápiz, 'fit' (contain/fill) escala y centra el dibujo dentro del lienzo " +
-        "(recomendado para los sólidos 3D). El resultado devuelve la geometría " +
+        "LÃ¡piz, 'fit' (contain/fill) escala y centra el dibujo dentro del lienzo " +
+        "(recomendado para los sÃ³lidos 3D). El resultado devuelve la geometrÃ­a " +
         "del canvas y el bounding box del contenido dibujado (canvasBounds) para " +
-        "autoverificación.",
+        "autoverificaciÃ³n.",
       inputSchema: {
         mode: drawModeSchema.default("generator"),
         tool: toolSchema,
