@@ -6,21 +6,26 @@
  * maximizarlas, mover el mouse, etc. Las operaciones MCP solo conocen el
  * puerto (src/domain/drawing.ts) y esta clase se la inyecta src/server.ts.
  *
- * Patrón de ventana (analogía Ext.window.Window): `createWindow()` abre una
- * ventana NUEVA de Paint con lienzo limpio y devuelve una instancia
- * PaintWindow; cada operación crea la suya y dibuja sobre su propia ventana.
- * Para abrir una ventana nueva cuando Paint ya está abierto se lanza un
- * proceso nuevo de mspaint.exe y se detecta la ventana nueva por DIFERENCIA
- * (enumerar antes y después); si no aparece, se crea una instancia nueva con
- * ShellExecuteW (AUMID de la app moderna). Si ambas fallan, se devuelve un
- * ERROR en lugar de dibujar sobre una ventana existente.
+ * Patrón de ventana (analogía Ext.window.Window): `createWindow()` devuelve
+ * una instancia PaintWindow con lienzo limpio. Para no acumular procesos de
+ * mspaint, el driver gestiona UNA ventana propia: la primera llamada la
+ * abre, y las siguientes la REUTILIZAN limpiando su lienzo (Ctrl+A, Supr)
+ * antes de devolverla. Las ventanas que no creó el driver (p. ej. las que
+ * abrió el usuario) nunca se tocan. Para abrir la ventana gestionada cuando
+ * Paint no está abierto se lanza un proceso nuevo de mspaint.exe y se
+ * detecta la ventana por DIFERENCIA (enumerar antes y después); si no
+ * aparece, se crea una instancia nueva con ShellExecuteW (AUMID de la app
+ * moderna). Si ambas fallan, se devuelve un ERROR en lugar de dibujar sobre
+ * una ventana existente.
  */
 
 import * as proc from "./process.js";
+import * as win32 from "./user32.js";
 import { createLogger } from "../logging/logger.js";
 import { AutomationClient } from "../windows/automation/automation-client.js";
 import {
   canvasPointsToClientPoints,
+  parseWindowHandleHex,
   type PaintCanvas,
   resolvePaintCanvas,
 } from "../../paint/discovery/canvas-resolver.js";
@@ -189,9 +194,15 @@ async function launchPaintWindow(): Promise<proc.WindowInfo> {
     return await proc.waitForWindowByPid(pid, WINDOW_WAIT_TIMEOUT_MS);
   } catch {
     // Windows 11: mspaint.exe puede quedarse sin ventana (stub UWP).
-    // Como respaldo se lanza la app moderna de Paint con ShellExecuteW.
+    // Como respaldo se lanza la app moderna de Paint con ShellExecuteW y se
+    // mata el stub de mspaint.exe que quedó vivo sin ventana.
     proc.shellExecuteApp(PAINT_UWP_AUMID);
-    return await waitForPaintWindow(WINDOW_WAIT_TIMEOUT_MS);
+    const window = await waitForPaintWindow(WINDOW_WAIT_TIMEOUT_MS);
+    proc.killProcess(pid);
+    logger.debug("Killed mspaint.exe stub left behind by a UWP-style launch", {
+      processId: pid,
+    });
+    return window;
   }
 }
 
@@ -213,9 +224,18 @@ async function createNewPaintWindow(): Promise<{
   const before = new Set(findPaintWindows().map((window) => window.hwnd));
 
   // 1) Proceso nuevo de mspaint.exe.
-  proc.spawnApplication("mspaint");
+  const spawnedPid = proc.spawnApplication("mspaint");
   const viaLaunched = await waitForNewPaintWindow(before, 5_000);
   if (viaLaunched !== null) {
+    if (viaLaunched.pid !== spawnedPid) {
+      // La ventana nueva vino de otro proceso (instancia ya abierta que
+      // recibió el mensaje): el mspawn se quedó como stub sin ventana.
+      proc.killProcess(spawnedPid);
+      logger.debug("Killed mspaint.exe stub (window came from another process)", {
+        processId: spawnedPid,
+        windowProcessId: viaLaunched.pid,
+      });
+    }
     return { window: viaLaunched, createdBy: "launched" };
   }
 
@@ -223,9 +243,14 @@ async function createNewPaintWindow(): Promise<{
   proc.shellExecuteApp(PAINT_UWP_AUMID);
   const viaShell = await waitForNewPaintWindow(before, 5_000);
   if (viaShell !== null) {
+    proc.killProcess(spawnedPid);
+    logger.debug("Killed mspaint.exe stub (launch resolved via ShellExecuteW)", {
+      processId: spawnedPid,
+    });
     return { window: viaShell, createdBy: "shell" };
   }
 
+  proc.killProcess(spawnedPid);
   throw new Error(
     "No se pudo crear una ventana nueva de Paint: el proceso de mspaint " +
       "no produjo una ventana y el lanzamiento por ShellExecuteW tampoco. " +
@@ -617,25 +642,88 @@ async function createPaintWindow(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Crea el adaptador de Paint sobre Win32 (un driver por proceso Node).
- * Cada llamada a createWindow() abre una ventana NUEVA con lienzo limpio.
+ * Driver de Paint sobre Win32 (un driver por proceso Node).
+ * `createWindow()` abre UNA ventana gestionada la primera vez y luego la
+ * reutiliza limpiando su lienzo: no acumula procesos de mspaint.
  */
+
+/** HWND de la última ventana de Paint creada por este driver (si sigue viva). */
+let managedWindowHwnd: bigint | null = null;
+
+/**
+ * Vacía el lienzo de la ventana gestionada (Ctrl+A + Supr) para que el
+ * siguiente dibujo arranque desde un lienzo limpio.
+ */
+async function clearPaintCanvas(hwnd: bigint): Promise<void> {
+  await proc.ensureWindowReady(hwnd, {
+    maximize: true,
+    foreground: true,
+    logger,
+  });
+  proc.pressKeyCombo([win32.VK_CONTROL], win32.VK_A);
+  await proc.sleep(150);
+  proc.pressKey(win32.VK_DELETE);
+  await proc.sleep(300);
+}
+
+/**
+ * Adquiere la ventana de Paint gestionada por el driver (una por proceso):
+ * reutiliza la propia si sigue viva, adopta la superior en arranque limpio,
+ * o abre una nueva si no hay ninguna. Las ventanas del usuario (antiguas o
+ * de fondo) no se tocan. NO vacía el lienzo: la limpieza es responsabilidad
+ * de quien va a dibujar (paint_draw).
+ */
+export async function acquireManagedPaintWindow(
+  options?: PaintWindowOptions,
+): Promise<PaintWindow> {
+  if (managedWindowHwnd !== null) {
+    const alive = findPaintWindows().find(
+      (window) => window.hwnd === managedWindowHwnd,
+    );
+    if (alive) {
+      return createPaintWindow(alive, "reused", options);
+    }
+  }
+
+  const existing = findPaintWindows();
+
+  if (existing.length === 0) {
+    // No hay Paint abierto: se lanza y su ventana ya trae un lienzo limpio.
+    const window = await launchPaintWindow();
+    managedWindowHwnd = window.hwnd;
+    return createPaintWindow(window, "opened", options);
+  }
+
+  // Arranque limpio con ventanas previas: se adopta la ventana superior
+  // (orden Z: EnumWindows enumera de arriba abajo; la nuestra de un
+  // proceso anterior suele quedar al frente) en vez de acumular otra
+  // ventana por cada reinicio del servidor.
+  if (managedWindowHwnd === null) {
+    const previous = existing[0];
+    logger.warn(
+      "Reusing the topmost Paint window from a previous server process",
+      {
+        windowHandle: proc.hwndToHexString(previous.hwnd),
+      },
+    );
+    managedWindowHwnd = previous.hwnd;
+    return createPaintWindow(previous, "reused", options);
+  }
+
+  // Hay otras ventanas de Paint (p. ej. del usuario): se crea la ventana
+  // gestionada SIN tocar las existentes.
+  const { window: fresh, createdBy } = await createNewPaintWindow();
+  managedWindowHwnd = fresh.hwnd;
+  return createPaintWindow(fresh, createdBy, options);
+}
+
 export function createWin32PaintDriver(): PaintPort {
   return {
     async createWindow(options?: PaintWindowOptions): Promise<PaintWindow> {
-      const existing = findPaintWindows();
-
-      if (existing.length === 0) {
-        // No hay Paint abierto: se lanza y su ventana ya trae un lienzo limpio.
-        const window = await launchPaintWindow();
-        return createPaintWindow(window, "opened", options);
-      }
-
-      // Paint ya está abierto: crear una ventana nueva (proceso mspaint con
-      // respaldo por ShellExecuteW) para no superponer dibujos de ventanas
-      // anteriores.
-      const { window: fresh, createdBy } = await createNewPaintWindow();
-      return createPaintWindow(fresh, createdBy, options);
+      const paintWindow = await acquireManagedPaintWindow(options);
+      const hwnd = parseWindowHandleHex(paintWindow.info.windowHandle);
+      await clearPaintCanvas(hwnd);
+      return paintWindow;
     },
   };
 }

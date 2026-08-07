@@ -11,7 +11,7 @@ export interface PaintSession {
   windowHandle: string;
   windowTitle: string;
   className: string;
-  createdBy: "opened" | "launched" | "shell";
+  createdBy: "opened" | "launched" | "shell" | "reused";
   automationRoot: AutomationElementReference;
   discoveredAt: string;
 }

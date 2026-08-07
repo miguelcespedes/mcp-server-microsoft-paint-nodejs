@@ -36,7 +36,11 @@ export interface Stroke {
  *  - "shell": ya había Paint abierto; la instancia nueva se creó con
  *    ShellExecuteW (AUMID de la app) porque mspaint.exe no creó ventana.
  */
-export type WindowCreationMethod = "opened" | "launched" | "shell";
+export type WindowCreationMethod =
+  | "opened"
+  | "launched"
+  | "shell"
+  | "reused";
 
 /** Opciones comunes de dibujo. */
 export interface DrawOptions {
@@ -127,9 +131,10 @@ export type FreehandResult = {
 
 /**
  * VENTANA DE PAINT (analogía Ext.window.Window): una instancia representa
- * UNA ventana con su propio lienzo. Cada operación crea su propia instancia
- * con `paint.createWindow()` y dibuja sobre ella; los dibujos de distintas
- * operaciones nunca se superponen.
+ * UNA ventana con su propio lienzo. El driver gestiona una única ventana:
+ * `paint.createWindow()` la reutiliza entre llamadas y vacía su lienzo
+ * (Ctrl+A + Supr) antes de cada dibujo, de modo que nunca se acumulan
+ * procesos de mspaint y cada dibujo arranca desde un lienzo limpio.
  */
 export interface PaintWindow {
   readonly info: PaintWindowInfo;
@@ -155,8 +160,9 @@ export interface PaintWindow {
  */
 export interface PaintPort {
   /**
-   * Crea una ventana NUEVA de Paint con un lienzo limpio y devuelve su
-   * instancia lista para dibujar.
+   * Devuelve una ventana de Paint con el lienzo limpio, lista para dibujar:
+   * reutiliza la ventana gestionada del driver (vaciando su lienzo) o la
+   * abre la primera vez.
    */
   createWindow(options?: PaintWindowOptions): Promise<PaintWindow>;
 }

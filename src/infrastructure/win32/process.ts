@@ -833,6 +833,23 @@ export function spawnApplication(
 }
 
 /**
+ * Termina un proceso por PID (taskkill /F). Se usa para limpiar los stubs de
+ * mspaint.exe de Windows 11 que quedan vivos sin ventana cuando el lanzamiento
+ * de Paint termina resolviéndose por ShellExecuteW. Los errores se ignoran:
+ * el proceso pudo ya haber salido o pertenecer a otra sesión.
+ */
+export function killProcess(pid: number): void {
+  const killer = spawn("taskkill", ["/PID", String(pid), "/F"], {
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  killer.on("error", () => {
+    // Sin destino: el proceso ya no existe. Nada que hacer.
+  });
+  killer.unref();
+}
+
+/**
  * Lanza una aplicación UWP/desktop por AUMID mediante ShellExecuteW
  * (el verbo "open" sobre un AUMID crea una instancia nueva de la app).
  * Es el mecanismo nativo de Windows para arrancar una instancia nueva de
