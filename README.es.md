@@ -2,24 +2,186 @@
 
 [English](README.md) | [Español](README.es.md)
 
-Este proyecto expone herramientas MCP (Model Context Protocol) para abrir Microsoft Paint y dibujar automáticamente desde Node.js y TypeScript.
+Este proyecto es un servidor MCP en Node.js + TypeScript que controla Microsoft Paint en Windows.
 
-Incluye estas herramientas:
+Ya incluía herramientas de dibujo basadas en mouse y ahora agrega una prueba de concepto con UI Automation para descubrir y usar la herramienta nativa `Ellipse` de Paint sin seleccionarla mediante coordenadas fijas del toolbar.
+
+## Propósito de Este Experimento
+
+La meta es pasar de una automatización basada solo en coordenadas a un pipeline semántico:
+
+```text
+LLM / MCP Client
+        │
+        ▼
+MCP Server
+        │
+        ▼
+Paint Domain Adapter
+        │
+        ├── UI Inventory
+        ├── Shape Resolver
+        └── Canvas Resolver
+        │
+        ▼
+Microsoft UI Automation + Win32
+        │
+        ▼
+Microsoft Paint
+```
+
+En lugar de hacer clic en una posición fija del toolbar, el servidor ahora intenta:
+
+- inspeccionar el árbol de accesibilidad de Paint
+- localizar semánticamente la zona de formas
+- resolver la herramienta nativa Elipse
+- invocarla con UI Automation
+- dibujar sobre el lienzo con `SendInput`
+
+## Herramientas MCP Actuales
+
+Herramientas existentes preservadas:
 
 - `paint_draw_freehand`
 - `paint_draw_polyline`
 - `paint_draw_logarithmic_spiral`
 
-Estas herramientas automatizan Microsoft Paint mediante la API Win32 (`user32.dll`, `shell32.dll`) a través de [Koffi](https://koffi.dev/).
+Herramientas nuevas de la POC con UI Automation:
 
-> Importante: la automatización de Paint funciona únicamente en Windows.
-> Es una prueba de concepto educativa. La interacción con la ventana se hace con llamadas Win32 desde Node.js usando Koffi. No usa RobotJS, Playwright, Puppeteer, AutoHotkey ni captura/análisis visual de pantalla.
+- `paint_inventory`
+- `paint_select_shape`
+- `paint_draw_ellipse`
 
-## Requisitos
+## Arquitectura
 
-- Windows 10 u 11 (64 bits)
-- Node.js 18 o superior (probado con Node 24)
+El servidor sigue siendo deliberadamente delgado en `src/server.ts`.
+
+Capas principales:
+
+```text
+src/
+  server.ts
+
+  infrastructure/
+    logging/
+      logger.ts
+    errors/
+      paint-mcp-error.ts
+    windows/
+      process/
+        window-locator.ts
+      automation/
+        automation-client.ts
+        automation-element.ts
+        automation-types.ts
+    win32/
+      user32.ts
+      shell.ts
+      process.ts
+      paint.ts
+    mcp/
+      registry.ts
+      operations/
+        freehand.operation.ts
+        polyline.operation.ts
+        logarithmic-spiral.operation.ts
+        paint-inventory.operation.ts
+        paint-select-shape.operation.ts
+        paint-draw-ellipse.operation.ts
+
+  paint/
+    paint-controller.ts
+    session/
+      paint-session.ts
+    discovery/
+      paint-ui-inventory.ts
+      shape-tool-resolver.ts
+      canvas-resolver.ts
+    shapes/
+      shape-tool.ts
+      ellipse-tool.ts
+    tools/
+      paint-inventory-tool.ts
+      paint-select-shape-tool.ts
+      paint-draw-ellipse-tool.ts
+```
+
+## Estrategia de UI Automation
+
+La build actual usada para esta POC es:
+
+- Windows: `Windows 10 Pro 24H2`, build `26100`
+- Paint: `Microsoft.Paint 11.2605.71.0 x64`
+
+Observaciones manuales de la build validada:
+
+- la sección de shapes aparece como un grupo semántico llamado `Formas`
+- la herramienta nativa de elipse aparece como un `ListItem` llamado `Elipse`
+- la superficie de dibujo se representa mejor por un elemento semántico tipo canvas con `automationId: "image"`
+- en la sesión validada, el canvas resuelto midió `794 x 723`
+
+El proyecto ya usaba `Koffi` con éxito para APIs Win32.
+
+Para UI Automation, esta POC usa:
+
+- TypeScript como capa principal de orquestación
+- un bridge pequeño en PowerShell usando ensamblados .NET incluidos en Windows:
+  - `UIAutomationClient`
+  - `UIAutomationTypes`
+
+Motivos de esta decisión:
+
+- el acceso Win32 directo ya existe y se conserva
+- consumir COM UI Automation directamente con Koffi sería mucho más grande y frágil para una POC
+- esta máquina no tiene instalado el SDK de `dotnet`, así que un bridge en C# agregaría una dependencia de entorno nueva
+- PowerShell 5.1 puede acceder a Microsoft UI Automation sin añadir una dependencia externa pesada
+
+## Selección Semántica vs Coordenadas Fijas
+
+Este repositorio ahora usa dos estilos distintos de automatización según el problema:
+
+- descubrimiento semántico de la UI y selección de herramienta para Elipse
+- input de mouse relativo a pantalla para el gesto final sobre el lienzo
+
+Lo que se evita para la herramienta Elipse:
+
+- coordenadas fijas del toolbar
+- OCR
+- reconocimiento visual por screenshots
+- automatización web
+- selección al estilo AutoHotkey / RobotJS
+
+Lo que sigue siendo válido:
+
+- arrastre por coordenadas dentro del lienzo validado de Paint
+
+## Dependencias
+
+Dependencias de runtime:
+
+- `@modelcontextprotocol/sdk`
+- `koffi`
+- `zod`
+
+Dependencias de desarrollo:
+
+- `typescript`
+- `tsx`
+- `@types/node`
+- `@modelcontextprotocol/inspector`
+
+## Requisitos de Windows
+
+- Windows 10 u 11
 - Microsoft Paint instalado
+- sesión interactiva de escritorio
+- PowerShell disponible
+
+Limitaciones importantes del entorno:
+
+- la app moderna de Paint puede abrirse a través de stubs `mspaint.exe`
+- los metadatos de UI Automation pueden variar entre versiones de Paint e idiomas del SO
+- el lienzo puede requerir un fallback si no aparece como un elemento semántico claro en la UI
 
 ## Instalación
 
@@ -27,53 +189,10 @@ Estas herramientas automatizan Microsoft Paint mediante la API Win32 (`user32.dl
 npm install
 ```
 
-Koffi instala un binario nativo. Si tu configuración de npm restringe scripts, aprueba Koffi explícitamente:
+Si tu configuración de npm restringe scripts nativos:
 
 ```bash
 npm approve-scripts koffi
-```
-
-## Estructura del proyecto
-
-Arquitectura hexagonal ligera: el dominio es puro y no conoce MCP ni Win32. Los adaptadores viven en `src/infrastructure/`. La composición ocurre en `src/server.ts`.
-
-```text
-src/
-  server.ts                        # Punto de composición
-  domain/
-    drawing.ts                     # Tipos de dibujo, PaintPort, PaintWindow
-    figures.ts                     # Helpers matemáticos puros para figuras
-  infrastructure/
-    win32/
-      user32.ts                    # Bindings y constantes de user32.dll
-      shell.ts                     # Binding mínimo de shell32.dll (ShellExecuteW)
-      process.ts                   # Helpers genéricos de Windows
-      paint.ts                     # Driver Win32 de Paint que implementa PaintPort
-    mcp/
-      schemas.ts                   # Esquemas zod compartidos
-      errors.ts                    # Formateo de errores MCP
-      registry.ts                  # Registro de todas las operaciones MCP
-      operations/
-        freehand.operation.ts
-        polyline.operation.ts
-        logarithmic-spiral.operation.ts
-test/
-  helpers.mjs                      # Helpers de cliente MCP + generadores de espiral
-  logarithmic-spiral.test.mjs
-  polyline.test.mjs
-  freehand.test.mjs
-```
-
-Flujo de dependencias:
-
-```text
-src/server.ts -> infrastructure/mcp/*
-                      |
-                      v
-               domain/drawing.ts <- infrastructure/win32/paint.ts
-                      ^
-                      |
-               domain/figures.ts
 ```
 
 ## Ejecución
@@ -84,265 +203,197 @@ Desarrollo:
 npm run dev
 ```
 
-Compilar y ejecutar:
+Compilar:
 
 ```bash
 npm run build
+```
+
+Ejecutar la versión compilada:
+
+```bash
 npm start
 ```
 
-## Diagrama de secuencia
-
-Pipeline completo desde una llamada MCP hasta el dibujo real en Paint:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant C as Cliente MCP / Inspector
-    participant S as src/server.ts
-    participant O as Operacion MCP
-    participant P as PaintPort / Driver Win32
-    participant W as Win32 / Shell / user32
-    participant M as Ventana de Paint
-
-    C->>S: callTool(name, arguments)
-    S->>O: Handler de herramienta registrada
-    O->>P: paint.createWindow()
-
-    alt No hay ninguna ventana de Paint abierta
-        P->>W: spawnApplication("mspaint")
-        W-->>P: PID
-        P->>W: waitForWindowByPid(pid)
-    else Paint ya esta abierto
-        P->>W: enumerateWindows()
-        P->>W: spawnApplication("mspaint")
-        P->>W: waitForNewPaintWindow(before, 5s)
-        alt mspaint.exe no crea una ventana nueva
-            P->>W: ShellExecuteW(AUMID de Paint)
-            P->>W: waitForNewPaintWindow(before, 5s)
-        end
-    end
-
-    W-->>P: WindowInfo (HWND, PID, titulo, clase)
-    P->>M: maximizeWindow + bringWindowToFront
-    P->>M: esperar PAINT_READY_DELAY_MS
-    P-->>O: PaintWindow
-
-    alt drawPolyline(points)
-        O->>P: window.drawPolyline(points, options)
-        P->>M: validar y convertir canvas -> client -> screen
-        opt skipToolSelection === false
-            P->>M: click en herramienta Lapiz
-        end
-        P->>W: SetCursorPos + SendInput(arrastre unico)
-    else drawFreehand(trazos)
-        O->>P: window.drawFreehand(trazos, options)
-        P->>M: validar y convertir canvas -> client -> screen
-        opt skipToolSelection === false
-            P->>M: click en herramienta Lapiz
-        end
-        loop un arrastre por trazo
-            P->>W: SetCursorPos + SendInput(arrastre)
-        end
-    end
-
-    P-->>O: resultado estructurado
-    O-->>S: content + structuredContent
-    S-->>C: respuesta MCP
-```
-
-Lectura rápida:
-
-- los clientes MCP nunca hablan con Win32 directamente
-- cada operación crea su propia `PaintWindow`
-- el driver Win32 decide cómo abrir o crear la nueva ventana de Paint
-- la automatización real ocurre con APIs Win32 como `ShellExecuteW`, enumeración de ventanas, `SetCursorPos` y `SendInput`
-- las herramientas devuelven respuestas MCP normales con `structuredContent`
-
-## Agregar una operación
-
-Cada operación MCP vive en su propio archivo `*.operation.ts` bajo `src/infrastructure/mcp/operations/`.
-
-Flujo típico:
-
-1. Agrega una figura pura a `src/domain/figures.ts` si hace falta.
-2. Crea `src/infrastructure/mcp/operations/<nombre>.operation.ts`.
-3. Define la entrada con esquemas zod.
-4. En el handler, llama a `paint.createWindow()` y luego a `window.drawPolyline(...)` o `window.drawFreehand(...)`.
-5. Registra la operación en `src/infrastructure/mcp/registry.ts`.
-
-Ejemplo mínimo:
-
-```ts
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { PaintPort } from "../../domain/drawing.js";
-import { logarithmicSpiral } from "../../domain/figures.js";
-import { toolErrorResult } from "../errors.js";
-
-export function registerLogarithmicSpiral(
-  server: McpServer,
-  paint: PaintPort,
-): void {
-  server.registerTool(
-    "paint_draw_logarithmic_spiral",
-    { title: "Espiral Logaritmica", description: "...", inputSchema: {} },
-    async () => {
-      try {
-        const points = logarithmicSpiral(SPIRAL_PARAMS);
-        const window = await paint.createWindow();
-        const result = await window.drawPolyline(points, { stepDelayMs: 8 });
-        return {
-          content: [{ type: "text", text: "Listo." }],
-          structuredContent: result,
-        };
-      } catch (error: unknown) {
-        return toolErrorResult("paint_draw_logarithmic_spiral", error);
-      }
-    },
-  );
-}
-```
-
-## MCP Inspector
+## Uso con MCP Inspector
 
 ```bash
 npm run inspect
 ```
 
-Empieza con `paint_draw_logarithmic_spiral`, luego prueba `paint_draw_freehand` y `paint_draw_polyline`.
+Flujo manual recomendado:
+
+1. Inicia MCP Inspector.
+2. Conéctate al servidor.
+3. Ejecuta `paint_inventory`.
+4. Confirma que el inventario devuelve un grupo relacionado con formas y una candidata tipo elipse.
+5. Ejecuta `paint_select_shape` con `ellipse`.
+6. Ejecuta `paint_draw_ellipse`.
+7. Confirma visualmente que Paint dibujó la elipse.
+
+## Ejemplos de Herramientas
+
+### `paint_inventory`
+
+Entrada de ejemplo:
+
+```json
+{
+  "maxDepth": 8,
+  "includeBoundingRectangles": true
+}
+```
+
+Nota: una build localizada de Paint puede exponer los nombres de shapes en otro idioma. Por ejemplo, en la build validada en español, `ellipse` aparece en el inventario como `Elipse`.
+
+Propósito:
+
+- inspeccionar el árbol de accesibilidad de Paint
+- resumir grupos y controles probables
+- diagnosticar diferencias entre versiones e idiomas
+
+### `paint_select_shape`
+
+Entrada de ejemplo:
+
+```json
+{
+  "shape": "ellipse"
+}
+```
+
+Propósito:
+
+- verificar que Paint está abierto
+- descubrir la forma semánticamente
+- invocar el control nativo Elipse a través de UI Automation
+
+### `paint_draw_ellipse`
+
+Entrada de ejemplo:
+
+```json
+{
+  "x": 100,
+  "y": 120,
+  "width": 300,
+  "height": 180,
+  "durationMs": 600
+}
+```
+
+Propósito:
+
+1. descubrir y seleccionar la herramienta Elipse semánticamente
+2. resolver el lienzo de Paint
+3. validar que la elipse solicitada cabe dentro del lienzo
+4. convertir coordenadas relativas al lienzo en coordenadas de pantalla
+5. ejecutar el gesto de arrastre con `SendInput`
+
+Forma típica de una respuesta correcta:
+
+```json
+{
+  "success": true,
+  "shape": "ellipse",
+  "bounds": {
+    "x": 100,
+    "y": 120,
+    "width": 300,
+    "height": 180
+  },
+  "toolSelection": {
+    "strategy": "accessible-name",
+    "confidence": 0.6,
+    "matchedProperties": {
+      "name": "Elipse"
+    }
+  },
+  "canvas": {
+    "source": "automation",
+    "width": 794,
+    "height": 723,
+    "automationId": "image",
+    "elementName": "Usando la herramienta Brocha en el lienzo"
+  }
+}
+```
+
+## Modelo de Errores
+
+La nueva ruta de UI Automation distingue errores como:
+
+- `PAINT_NOT_RUNNING`
+- `PAINT_WINDOW_NOT_FOUND`
+- `UI_AUTOMATION_UNAVAILABLE`
+- `SHAPES_GROUP_NOT_FOUND`
+- `ELLIPSE_TOOL_NOT_FOUND`
+- `AMBIGUOUS_SHAPE_TOOL`
+- `CANVAS_NOT_FOUND`
+- `INVALID_CANVAS_BOUNDS`
+- `DRAW_BOUNDS_OUTSIDE_CANVAS`
+- `PAINT_LOST_FOCUS`
+- `INPUT_INJECTION_FAILED`
+
+Los errores se devuelven como respuestas MCP con `isError: true` y diagnóstico estructurado.
 
 ## Pruebas
 
-Las pruebas de integración usan el runner nativo de Node y dibujan sobre ventanas reales de Paint, por lo que mueven el mouse real y dependen de la sesión interactiva de Windows.
-
-Aunque cada operación crea su propia ventana, los tests deben correr en serie porque comparten el mouse real, el proceso de Paint y el foco de Windows. Por eso `npm test` usa `--test-concurrency=1`.
+Primero compila:
 
 ```bash
 npm run build
+```
+
+Ejecuta todas las pruebas:
+
+```bash
 npm test
 ```
 
-Ejecutar un solo test:
+Las pruebas unitarias agregadas para esta POC cubren:
 
-```bash
-node --test --test-concurrency=1 test/polyline.test.mjs
-```
+- resolución de aliases
+- priorización por `AutomationId`
+- coincidencias ambiguas
+- validación de duración
+- validación de límites del lienzo
+- conversión de coordenadas
+- serialización de handles
 
-## Comportamiento de las herramientas
+Estas pruebas unitarias no abren ventanas reales de Paint.
 
-### `paint_draw_logarithmic_spiral`
+## Limitaciones Conocidas
 
-Operación de ejemplo sin argumentos. Dibuja una espiral logarítmica `r = 1.1^theta` durante 6 vueltas. Es la forma más rápida de verificar el servidor desde MCP Inspector.
+- solo `ellipse` está soportada en esta iteración
+- el descubrimiento de shapes es heurístico y puede variar entre builds de Paint
+- los metadatos accesibles localizados pueden cambiar según el idioma de Windows
+- el lienzo no siempre estará expuesto limpiamente vía UI Automation
+- cuando la detección semántica del lienzo es débil, la implementación cae al modelo geométrico fijo que ya usaba el proyecto
+- las operaciones legacy siguen teniendo supuestos de layout previos a esta POC de UI Automation
 
-### `paint_draw_freehand`
+## Riesgos de Compatibilidad
 
-Dibujo libre: uno o más trazos, cada uno dibujado con un único arrastre del mouse.
+Las partes más frágiles entre versiones de Paint son:
 
-Parámetros:
+- nombres accesibles
+- valores de `AutomationId`
+- agrupación de los botones de formas
+- exposición del lienzo en el árbol de UI Automation
 
-- `strokes`: 1-100 trazos, cada uno como `{ points: [{x, y}, ...] }`, 2-1000 puntos por trazo
-- `stepDelayMs`: entero, 0-200, por defecto `10`
-- `skipToolSelection`: booleano opcional; `false` selecciona la herramienta Lápiz antes de dibujar
+En la build validada durante este experimento, la implementación tuvo que adaptarse a esta estructura concreta:
 
-Payload por defecto del Inspector:
+- `Formas` es un `Group`
+- la galería de shapes vive dentro de un `GridView` anidado
+- `Elipse` es un `ListItem`, no un `Button` directo del toolbar
+- el canvas correcto es el elemento semántico `image`, no el `ScrollViewer` exterior más grande
 
-```json
-{
-  "strokes": [
-    { "points": [{"x": 100, "y": 100}, {"x": 200, "y": 300}, {"x": 300, "y": 100}, {"x": 400, "y": 300}, {"x": 500, "y": 100}] },
-    { "points": [{"x": 550, "y": 300}, {"x": 650, "y": 100}] }
-  ],
-  "stepDelayMs": 10
-}
-```
+Por eso existe `paint_inventory`: ofrece una ruta de diagnóstico reproducible antes de cambiar el resolver.
 
-### `paint_draw_polyline`
+## Material Sugerido para una Publicación Posterior
 
-Dibuja una polilínea conectada con un único arrastre. Es útil para curvas, espirales y figuras generadas.
+Si más adelante quieres publicar este experimento, el material más útil sería:
 
-Parámetros:
-
-- `points`: 2-1000 puntos `{x, y}`
-- `stepDelayMs`: entero, 0-200, por defecto `10`
-- `skipToolSelection`: booleano opcional; `false` selecciona la herramienta Lápiz antes de dibujar
-
-Payload por defecto del Inspector:
-
-```json
-{
-  "points": [{"x": 200, "y": 100}, {"x": 600, "y": 100}, {"x": 600, "y": 500}, {"x": 200, "y": 500}],
-  "stepDelayMs": 10
-}
-```
-
-## Ciclo de vida de la ventana de Paint
-
-Cada llamada crea su propia ventana de Paint y devuelve metadatos incluyendo:
-
-- `windowHandle`
-- `windowTitle`
-- `processId`
-- `createdBy`
-
-`createdBy` puede ser:
-
-- `opened`: Paint no estaba abierto, así que se abrió una ventana nueva
-- `launched`: Paint ya estaba abierto y `mspaint.exe` creó una nueva ventana
-- `shell`: `mspaint.exe` no creó una nueva ventana, así que se usó `ShellExecuteW` con el AUMID de Paint
-
-Pipeline interno de dibujo:
-
-1. `paint.createWindow()`
-2. maximizar la ventana
-3. traerla al primer plano
-4. esperar `PAINT_READY_DELAY_MS` para que el lienzo esté listo
-5. convertir coordenadas de canvas a cliente usando `CANVAS_ORIGIN`
-6. validar límites
-7. convertir a coordenadas de pantalla
-8. dibujar con `SetCursorPos` y `SendInput`
-
-## APIs Win32 usadas
-
-- `EnumWindows`
-- `GetWindowTextW`
-- `GetClassNameW`
-- `GetWindowThreadProcessId`
-- `GetForegroundWindow`
-- `IsWindow`
-- `IsWindowVisible`
-- `IsIconic`
-- `SetForegroundWindow`
-- `ShowWindow`
-- `AttachThreadInput`
-- `GetClientRect`
-- `ClientToScreen`
-- `SetCursorPos`
-- `GetSystemMetrics`
-- `SetProcessDpiAwarenessContext`
-- `SendInput`
-- `ShellExecuteW`
-
-## Seguridad y validaciones
-
-- valida que el `HWND` siga existiendo antes de usarlo
-- rechaza coordenadas negativas
-- rechaza puntos fuera del área cliente de Paint
-- limita `stepDelayMs` a `0-200`
-- limita puntos y trazos a rangos controlados
-- devuelve una advertencia si Windows no permite llevar la ventana al primer plano
-
-## Limitaciones
-
-- solo Windows
-- mueve el mouse real durante el dibujo
-- depende de las restricciones de foco de Windows y de una sesión interactiva de escritorio
-- usa offsets de layout hardcodeados medidos sobre una build específica de Paint moderno
-- la selección opcional del Lápiz está basada en coordenadas y es menos fiable que dibujar con la herramienta ya activa
-- `mspaint.exe` puede comportarse como stub UWP en Windows 11, así que el driver puede necesitar el fallback con `ShellExecuteW`
-- las ventanas de Paint se acumulan y hay que cerrarlas manualmente
-
-## Notas sobre Koffi
-
-- `HWND` y `HANDLE` se tratan como punteros de 64 bits y se representan como `BigInt`
-- `INPUT` / `MOUSEINPUT` deben coincidir con el layout exacto de x64
-- `EnumWindows` usa un callback transitorio de Koffi que solo es válido durante la llamada
+- un GIF corto de `paint_inventory` -> `paint_select_shape` -> `paint_draw_ellipse`
+- una captura de la UI de Paint con la herramienta Elipse seleccionada
+- una captura del resultado final dibujado sobre el lienzo

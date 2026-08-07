@@ -10,17 +10,44 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { PaintPort } from "../../../domain/drawing.js";
-import { logarithmicSpiral } from "../../../domain/figures.js";
+import { logarithmicSpiral, spiralMaxRadius } from "../../../domain/figures.js";
+import { notifyOperationFinished } from "../../win32/process.js";
 import { toolErrorResult } from "../errors.js";
+import { logToolFinished, logToolStarted } from "../tool-logging.js";
 
-/** Parameters for Example 1 (center of the maximized 892x723 canvas). */
-const SPIRAL_PARAMS = {
+const BASE_SPIRAL_PARAMS = {
   growth: 1.1,
   turns: 6,
   angleStep: 0.05,
-  scale: 7,
-  center: { x: 446, y: 361 },
+  scale: 1,
+  center: { x: 0, y: 0 },
 } as const;
+
+function buildSpiralParamsForCanvas(canvas: {
+  logicalWidth: number;
+  logicalHeight: number;
+}) {
+  const center = {
+    x: Math.floor(canvas.logicalWidth / 2),
+    y: Math.floor(canvas.logicalHeight / 2),
+  };
+
+  // Keep a small margin from the document edges so the spiral fits even on
+  // smaller canvases and does not touch resize handles or page borders.
+  const maxAllowedRadius = Math.max(
+    8,
+    Math.floor(Math.min(canvas.logicalWidth, canvas.logicalHeight) / 2) - 12,
+  );
+
+  const unitRadius = spiralMaxRadius(BASE_SPIRAL_PARAMS);
+  const scale = Math.max(1, maxAllowedRadius / unitRadius);
+
+  return {
+    ...BASE_SPIRAL_PARAMS,
+    center,
+    scale,
+  };
+}
 
 export function registerLogarithmicSpiral(
   server: McpServer,
@@ -39,9 +66,11 @@ export function registerLogarithmicSpiral(
       inputSchema: {},
     },
     async () => {
+      logToolStarted("paint_draw_logarithmic_spiral");
+      let outcome: "success" | "error" = "error";
       try {
-        const points = logarithmicSpiral(SPIRAL_PARAMS);
         const window = await paint.createWindow();
+        const points = logarithmicSpiral(buildSpiralParamsForCanvas(window.canvas));
         const result = await window.drawPolyline(points, { stepDelayMs: 8 });
         return {
           content: [
@@ -55,8 +84,13 @@ export function registerLogarithmicSpiral(
           ],
           structuredContent: result,
         };
+        outcome = "success";
+        return response;
       } catch (error: unknown) {
         return toolErrorResult("paint_draw_logarithmic_spiral", error);
+      } finally {
+        logToolFinished("paint_draw_logarithmic_spiral", outcome);
+        notifyOperationFinished();
       }
     },
   );

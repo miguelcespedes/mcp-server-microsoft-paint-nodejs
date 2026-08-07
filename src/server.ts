@@ -11,7 +11,11 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { PaintController } from "./paint/paint-controller.js";
+import { PaintSessionStore } from "./paint/session/paint-session.js";
+import { createLogger } from "./infrastructure/logging/logger.js";
 import { createWin32PaintDriver } from "./infrastructure/win32/paint.js";
+import { AutomationClient } from "./infrastructure/windows/automation/automation-client.js";
 import { registerOperations } from "./infrastructure/mcp/registry.js";
 
 const server = new McpServer({
@@ -21,7 +25,11 @@ const server = new McpServer({
 
 // Operaciones de automatización de Microsoft Paint (solo Windows).
 const paint = createWin32PaintDriver();
-registerOperations(server, paint);
+const logger = createLogger();
+const automationClient = new AutomationClient();
+const sessionStore = new PaintSessionStore(logger);
+const controller = new PaintController(sessionStore, automationClient, logger);
+registerOperations(server, paint, controller);
 
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();

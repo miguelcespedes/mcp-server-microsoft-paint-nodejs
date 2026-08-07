@@ -7,6 +7,7 @@
  */
 
 import { spawn } from "node:child_process";
+import type { Logger } from "../logging/logger.js";
 import * as shell from "./shell.js";
 import * as win32 from "./user32.js";
 
@@ -16,6 +17,22 @@ export interface Point2D {
 }
 
 export interface Size2D {
+  width: number;
+  height: number;
+}
+
+export interface Rectangle2D {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+}
+
+export interface MonitorInfo {
+  left: number;
+  top: number;
   width: number;
   height: number;
 }
@@ -33,6 +50,17 @@ export interface WindowInfo {
 export interface FocusResult {
   success: boolean;
   warning?: string;
+}
+
+export interface EnsureWindowReadyOptions {
+  maximize?: boolean;
+  foreground?: boolean;
+  stableReadings?: number;
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+  readyGraceMs?: number;
+  foregroundAttempts?: number;
+  logger?: Logger;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,6 +142,11 @@ export function getWindowInfo(hwnd: bigint): WindowInfo {
     className: getWindowClassName(hwnd),
     visible: Boolean(win32.isWindowVisible(hwnd)),
   };
+}
+
+/** Obtiene el HWND de la ventana actualmente en foreground. */
+export function getForegroundWindowHandle(): bigint {
+  return win32.getForegroundWindow();
 }
 
 /**
@@ -253,6 +286,259 @@ export function maximizeWindow(hwnd: bigint): boolean {
   return Boolean(win32.showWindow(hwnd, win32.SW_MAXIMIZE));
 }
 
+/** Tamaño del monitor primario según GetSystemMetrics. */
+export function getPrimaryMonitorInfo(): MonitorInfo {
+  return {
+    left: 0,
+    top: 0,
+    width: win32.getSystemMetrics(win32.SM_CXSCREEN),
+    height: win32.getSystemMetrics(win32.SM_CYSCREEN),
+  };
+}
+
+/** Mueve la ventana al monitor primario antes de maximizarla. */
+export function moveWindowToPrimaryMonitor(hwnd: bigint): boolean {
+  assertValidWindow(hwnd, "moveWindowToPrimaryMonitor");
+  const monitor = getPrimaryMonitorInfo();
+  return Boolean(
+    win32.setWindowPos(
+      hwnd,
+      0n,
+      monitor.left,
+      monitor.top,
+      monitor.width,
+      monitor.height,
+      win32.SWP_NOZORDER | win32.SWP_NOACTIVATE | win32.SWP_SHOWWINDOW,
+    ),
+  );
+}
+
+/** Comprueba si la ventana está maximizada. */
+export function isWindowMaximized(hwnd: bigint): boolean {
+  assertValidWindow(hwnd, "isWindowMaximized");
+  return Boolean(win32.isZoomed(hwnd));
+}
+
+/** Obtiene el rectángulo exterior de la ventana en coordenadas de pantalla. */
+export function getWindowRect(hwnd: bigint): Rectangle2D {
+  assertValidWindow(hwnd, "getWindowRect");
+
+  const rect: win32.RectLike = { left: 0, top: 0, right: 0, bottom: 0 };
+  const succeeded = win32.getWindowRect(hwnd, rect);
+  if (!succeeded) {
+    throw new Error(
+      `GetWindowRect falló para la ventana ${hwndToHexString(hwnd)}.`,
+    );
+  }
+
+  return {
+    left: rect.left,
+    top: rect.top,
+    right: rect.right,
+    bottom: rect.bottom,
+    width: rect.right - rect.left,
+    height: rect.bottom - rect.top,
+  };
+}
+
+function areRectsEqual(left: Rectangle2D, right: Rectangle2D): boolean {
+  return (
+    left.left === right.left &&
+    left.top === right.top &&
+    left.right === right.right &&
+    left.bottom === right.bottom
+  );
+}
+
+function areSizesEqual(left: Size2D, right: Size2D): boolean {
+  return left.width === right.width && left.height === right.height;
+}
+
+/**
+ * Espera a que el rectángulo de la ventana permanezca estable durante varias
+ * lecturas consecutivas. Evita depender solo de un sleep fijo para saber si
+ * Paint ya terminó de recalcular el layout tras restaurar/maximizar.
+ */
+export async function waitForStableWindowRect(
+  hwnd: bigint,
+  stableReadings: number,
+  timeoutMs: number,
+  pollIntervalMs: number,
+): Promise<Rectangle2D> {
+  assertValidWindow(hwnd, "waitForStableWindowRect");
+
+  const deadline = Date.now() + timeoutMs;
+  let lastRect = getWindowRect(hwnd);
+  let stableCount = 1;
+
+  while (Date.now() < deadline) {
+    await sleep(pollIntervalMs);
+    const rect = getWindowRect(hwnd);
+    if (areRectsEqual(lastRect, rect)) {
+      stableCount += 1;
+      if (stableCount >= stableReadings) {
+        return rect;
+      }
+    } else {
+      stableCount = 1;
+      lastRect = rect;
+    }
+  }
+
+  throw new Error(
+    `La ventana ${hwndToHexString(hwnd)} no estabilizó su rectángulo tras ${timeoutMs} ms.`,
+  );
+}
+
+/**
+ * Espera a que el tamaño del área cliente también se estabilice. En Paint
+ * moderno, el HWND puede quedar estable unos instantes antes de que termine
+ * el recálculo interno del ribbon y del canvas.
+ */
+export async function waitForStableClientSize(
+  hwnd: bigint,
+  stableReadings: number,
+  timeoutMs: number,
+  pollIntervalMs: number,
+): Promise<Size2D> {
+  assertValidWindow(hwnd, "waitForStableClientSize");
+
+  const deadline = Date.now() + timeoutMs;
+  let lastSize = getClientSize(hwnd);
+  let stableCount = 1;
+
+  while (Date.now() < deadline) {
+    await sleep(pollIntervalMs);
+    const size = getClientSize(hwnd);
+    if (areSizesEqual(lastSize, size)) {
+      stableCount += 1;
+      if (stableCount >= stableReadings) {
+        return size;
+      }
+    } else {
+      stableCount = 1;
+      lastSize = size;
+    }
+  }
+
+  throw new Error(
+    `La ventana ${hwndToHexString(hwnd)} no estabilizó su área cliente tras ${timeoutMs} ms.`,
+  );
+}
+
+/**
+ * Normaliza el estado de la ventana de Paint antes de inventariar UIA o dibujar:
+ * restaura si está minimizada, maximiza, lleva al foreground, verifica foco
+ * real y espera a que el layout se estabilice.
+ */
+export async function ensureWindowReady(
+  hwnd: bigint,
+  options: EnsureWindowReadyOptions = {},
+): Promise<Rectangle2D> {
+  assertValidWindow(hwnd, "ensureWindowReady");
+
+  const {
+    maximize = true,
+    foreground = true,
+    stableReadings = 3,
+    timeoutMs = 4_000,
+    pollIntervalMs = 150,
+    readyGraceMs = 1_000,
+    foregroundAttempts = 5,
+    logger,
+  } = options;
+
+  logger?.debug("Paint window initial state", {
+    hwnd: hwndToHexString(hwnd),
+    iconic: Boolean(win32.isIconic(hwnd)),
+    zoomed: Boolean(win32.isZoomed(hwnd)),
+    rect: getWindowRect(hwnd),
+    primaryMonitor: getPrimaryMonitorInfo(),
+  });
+
+  if (win32.isIconic(hwnd)) {
+    win32.showWindow(hwnd, win32.SW_RESTORE);
+    logger?.debug("Paint window restored from minimized state", {
+      hwnd: hwndToHexString(hwnd),
+    });
+  }
+
+  if (maximize && !win32.isZoomed(hwnd)) {
+    maximizeWindow(hwnd);
+    logger?.debug("Paint window maximized", {
+      hwnd: hwndToHexString(hwnd),
+    });
+  }
+
+  if (foreground) {
+    const focus = await bringWindowToFront(hwnd);
+    logger?.debug("Paint window foreground request finished", {
+      hwnd: hwndToHexString(hwnd),
+      success: focus.success,
+      warning: focus.warning,
+    });
+    if (!focus.success) {
+      throw new Error(
+        focus.warning ?? "Windows no permitió traer Paint al foreground.",
+      );
+    }
+  }
+
+  let foregroundHwnd = getForegroundWindowHandle();
+  logger?.debug("Foreground HWND after normalization", {
+    expected: hwndToHexString(hwnd),
+    actual: hwndToHexString(foregroundHwnd),
+  });
+  if (foreground && foregroundHwnd !== hwnd) {
+    let matchedForeground = false;
+    for (let attempt = 1; attempt <= foregroundAttempts; attempt += 1) {
+      await sleep(120);
+      await bringWindowToFront(hwnd);
+      await sleep(120);
+      foregroundHwnd = getForegroundWindowHandle();
+      logger?.debug("Foreground retry after normalization", {
+        attempt,
+        expected: hwndToHexString(hwnd),
+        actual: hwndToHexString(foregroundHwnd),
+      });
+      if (foregroundHwnd === hwnd) {
+        matchedForeground = true;
+        break;
+      }
+    }
+
+    if (!matchedForeground) {
+      throw new Error(
+        `La ventana activa no es Paint tras la normalización (${hwndToHexString(foregroundHwnd)}).`,
+      );
+    }
+  }
+
+  const rect = await waitForStableWindowRect(
+    hwnd,
+    stableReadings,
+    timeoutMs,
+    pollIntervalMs,
+  );
+  const clientSize = await waitForStableClientSize(
+    hwnd,
+    stableReadings,
+    timeoutMs,
+    pollIntervalMs,
+  );
+  if (readyGraceMs > 0) {
+    await sleep(readyGraceMs);
+  }
+  logger?.debug("Paint window stabilized", {
+    hwnd: hwndToHexString(hwnd),
+    rect,
+    clientSize,
+    readyGraceMs,
+  });
+
+  return rect;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Área cliente y coordenadas
 // ─────────────────────────────────────────────────────────────────────────────
@@ -334,6 +620,44 @@ function sendMouseInput(args: MouseInputArgs): void {
   }
 }
 
+function sendKeyboardEvent(vk: number, keyUp: boolean): void {
+  const input: win32.InputLike = {
+    type: win32.INPUT_KEYBOARD,
+    u: {
+      ki: {
+        wVk: vk,
+        wScan: 0,
+        dwFlags: keyUp ? win32.KEYEVENTF_KEYUP : 0,
+        time: 0,
+        dwExtraInfo: 0n,
+      },
+    },
+  };
+
+  const sent = win32.sendInput(1, input, win32.sizeofInput);
+  if (sent !== 1) {
+    throw new Error(
+      `SendInput no pudo enviar el evento de teclado (VK=0x${vk.toString(16)}, keyUp=${keyUp}).`,
+    );
+  }
+}
+
+export function pressKey(vk: number): void {
+  sendKeyboardEvent(vk, false);
+  sendKeyboardEvent(vk, true);
+}
+
+export function pressKeyCombo(modifiers: number[], vk: number): void {
+  for (const modifier of modifiers) {
+    sendKeyboardEvent(modifier, false);
+  }
+  sendKeyboardEvent(vk, false);
+  sendKeyboardEvent(vk, true);
+  for (const modifier of [...modifiers].reverse()) {
+    sendKeyboardEvent(modifier, true);
+  }
+}
+
 /** Presiona el botón izquierdo del mouse. */
 export function mouseButtonDown(): void {
   sendMouseInput({ flags: win32.MOUSEEVENTF_LEFTDOWN });
@@ -404,12 +728,72 @@ export async function dragPolyline(
 
   mouseButtonDown();
   try {
+    // Paint puede tardar un instante en comenzar realmente el trazo tras el
+    // mouse-down; este pequeño dwell evita que se pierda el segmento inicial.
+    await sleep(90);
+
     for (let i = 1; i < points.length; i++) {
       mouseMoveAbsolute(points[i]);
       if (stepDelayMs > 0) {
         await sleep(stepDelayMs);
       }
     }
+  } finally {
+    mouseButtonUp();
+  }
+}
+
+/**
+ * Gesto de arrastre simple para herramientas nativas de formas de Paint.
+ *
+ * A diferencia de dragPolyline(), aquí no intentamos seguir una trayectoria
+ * compleja. Paint solo necesita el rectángulo delimitador de la forma:
+ * punto inicial + punto final con el botón presionado.
+ */
+export async function dragShapeBounds(
+  start: Point2D,
+  end: Point2D,
+  durationMs: number,
+): Promise<void> {
+  if (durationMs < 50 || durationMs > 5_000) {
+    throw new Error(
+      `dragShapeBounds requiere durationMs entre 50 y 5000 (recibido: ${durationMs}).`,
+    );
+  }
+
+  setCursorPosition(start);
+  await sleep(80);
+
+  mouseButtonDown();
+  try {
+    // Darle tiempo a Paint para entrar en modo de creación de shape.
+    await sleep(120);
+
+    // Pequeño movimiento inicial: algunas herramientas nativas de shapes no
+    // comienzan a crear la figura hasta que detectan un desplazamiento real
+    // tras el mouse-down.
+    const kickoff = {
+      x: start.x + Math.sign(end.x - start.x || 1),
+      y: start.y + Math.sign(end.y - start.y || 1),
+    };
+    mouseMoveAbsolute(kickoff);
+    await sleep(80);
+
+    // Para shapes nativas de Paint, el rectángulo delimitador suele responder
+    // mejor a movimientos absolutos inyectados mientras el botón permanece
+    // abajo, siempre que haya un pequeño desplazamiento inicial de arranque.
+    const steps = Math.max(6, Math.min(24, Math.round(durationMs / 40)));
+    for (let i = 1; i <= steps; i += 1) {
+      mouseMoveAbsolute({
+        x: Math.round(kickoff.x + ((end.x - kickoff.x) * i) / steps),
+        y: Math.round(kickoff.y + ((end.y - kickoff.y) * i) / steps),
+      });
+      await sleep(Math.max(12, Math.round(durationMs / steps)));
+    }
+
+    // Mantener un instante el mouse en el punto final antes de soltar ayuda
+    // a que Paint consolide la shape creada.
+    await sleep(140);
   } finally {
     mouseButtonUp();
   }
@@ -469,5 +853,14 @@ export function shellExecuteApp(aumid: string): void {
     throw new Error(
       `ShellExecuteW falló al lanzar la aplicación "${aumid}".`,
     );
+  }
+}
+
+/** Alerta sonora no intrusiva para indicar que una operación terminó. */
+export function notifyOperationFinished(): void {
+  try {
+    win32.messageBeep(0xffffffff);
+  } catch {
+    // No interrumpir la operación si el beep falla.
   }
 }

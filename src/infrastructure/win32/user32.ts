@@ -130,6 +130,12 @@ export const SW_RESTORE = 9;
 /** Maximiza la ventana. */
 export const SW_MAXIMIZE = 3;
 
+/** Flags de SetWindowPos. */
+export const SWP_NOSIZE = 0x0001;
+export const SWP_NOZORDER = 0x0004;
+export const SWP_NOACTIVATE = 0x0010;
+export const SWP_SHOWWINDOW = 0x0040;
+
 /** Tipo de evento INPUT_MOUSE para SendInput. */
 export const INPUT_MOUSE = 0;
 /** Tipo de evento INPUT_KEYBOARD para SendInput. */
@@ -150,10 +156,17 @@ export const MOUSEEVENTF_VIRTUALDESK = 0x4000;
 export const KEYEVENTF_KEYUP = 0x0002;
 
 /** Códigos de tecla virtual comunes. */
+export const VK_CONTROL = 0x11;
+export const VK_HOME = 0x24;
+export const VK_RETURN = 0x0d;
+export const VK_DOWN = 0x28;
 export const VK_ESCAPE = 0x1b;
+export const VK_E = 0x45;
 export const VK_P = 0x50;
 
 /** Índices de GetSystemMetrics para el escritorio virtual (multi-monitor). */
+export const SM_CXSCREEN = 0;
+export const SM_CYSCREEN = 1;
 export const SM_XVIRTUALSCREEN = 76;
 export const SM_YVIRTUALSCREEN = 77;
 export const SM_CXVIRTUALSCREEN = 78;
@@ -269,6 +282,11 @@ export const isIconic = user32.func(
   "bool __stdcall IsIconic(HWND hWnd)",
 ) as unknown as (hwnd: bigint) => boolean;
 
+/** Comprueba si la ventana está maximizada. */
+export const isZoomed = user32.func(
+  "bool __stdcall IsZoomed(HWND hWnd)",
+) as unknown as (hwnd: bigint) => boolean;
+
 /** Intenta llevar la ventana al primer plano. */
 export const setForegroundWindow = user32.func(
   "bool __stdcall SetForegroundWindow(HWND hWnd)",
@@ -279,9 +297,32 @@ export const showWindow = user32.func(
   "bool __stdcall ShowWindow(HWND hWnd, int nCmdShow)",
 ) as unknown as (hwnd: bigint, nCmdShow: number) => boolean;
 
+/** Reproduce el sonido del sistema asociado al tipo indicado. */
+export const messageBeep = user32.func(
+  "bool __stdcall MessageBeep(uint32_t uType)",
+) as unknown as (uType: number) => boolean;
+
+/** Reubica/redimensiona la ventana. */
+export const setWindowPos = user32.func(
+  "bool __stdcall SetWindowPos(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy, uint32_t uFlags)",
+) as unknown as (
+  hwnd: bigint,
+  hwndInsertAfter: bigint,
+  x: number,
+  y: number,
+  cx: number,
+  cy: number,
+  flags: number,
+) => boolean;
+
 /** Obtiene el rectángulo del área cliente de la ventana. */
 export const getClientRect = user32.func(
   "bool __stdcall GetClientRect(HWND hWnd, _Out_ RECT *lpRect)",
+) as unknown as (hwnd: bigint, rect: RectLike) => boolean;
+
+/** Obtiene el rectángulo exterior de la ventana en coordenadas de pantalla. */
+export const getWindowRect = user32.func(
+  "bool __stdcall GetWindowRect(HWND hWnd, _Out_ RECT *lpRect)",
 ) as unknown as (hwnd: bigint, rect: RectLike) => boolean;
 
 /** Convierte coordenadas del área cliente a coordenadas absolutas de pantalla (in/out). */

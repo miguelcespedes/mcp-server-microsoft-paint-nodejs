@@ -52,6 +52,36 @@ export interface PaintWindowInfo {
   createdBy: WindowCreationMethod;
 }
 
+export interface PaintCanvasInfo {
+  source: "automation" | "fixed-layout";
+  width: number;
+  height: number;
+  logicalWidth: number;
+  logicalHeight: number;
+  clientOrigin: Point2D;
+  screenOrigin: Point2D;
+  elementName?: string;
+  automationId?: string;
+}
+
+export interface CanvasRequirement {
+  width: number;
+  height: number;
+  units: "pixels";
+}
+
+export interface DrawingRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface PaintWindowOptions {
+  canvas?: CanvasRequirement;
+  drawingRegion?: DrawingRegion;
+}
+
 export type PolylineResult = {
   success: boolean;
   processId: number;
@@ -87,6 +117,8 @@ export type FreehandResult = {
  */
 export interface PaintWindow {
   readonly info: PaintWindowInfo;
+  readonly canvas: PaintCanvasInfo;
+  readonly drawingRegion?: DrawingRegion;
   /** Dibuja una polilínea (serie de puntos) con un único arrastre. */
   drawPolyline(
     points: Point2D[],
@@ -110,5 +142,5 @@ export interface PaintPort {
    * Crea una ventana NUEVA de Paint con un lienzo limpio y devuelve su
    * instancia lista para dibujar.
    */
-  createWindow(): Promise<PaintWindow>;
+  createWindow(options?: PaintWindowOptions): Promise<PaintWindow>;
 }

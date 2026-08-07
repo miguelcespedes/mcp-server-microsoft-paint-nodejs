@@ -11,7 +11,9 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { PaintPort } from "../../../domain/drawing.js";
+import { notifyOperationFinished } from "../../win32/process.js";
 import { toolErrorResult } from "../errors.js";
+import { logToolFinished, logToolStarted } from "../tool-logging.js";
 import {
   pointSchema,
   skipToolSelectionSchema,
@@ -34,8 +36,8 @@ export function registerPolyline(
         "Coordinates are relative to the Paint canvas, NOT the client area. " +
         "If you want the Pencil tool, pass skipToolSelection=false. " +
         "Windows only. " +
-        'Example JSON: {"points": [{"x": 200, "y": 100}, ' +
-        '{"x": 600, "y": 100}, {"x": 600, "y": 500}, {"x": 200, "y": 500}], ' +
+        'Example JSON: {"points": [{"x": 80, "y": 80}, ' +
+        '{"x": 420, "y": 80}, {"x": 420, "y": 360}, {"x": 80, "y": 360}], ' +
         '"stepDelayMs": 10}',
       inputSchema: {
         points: z
@@ -43,10 +45,10 @@ export function registerPolyline(
           .min(2)
           .max(1000)
           .default([
-            { x: 200, y: 100 },
-            { x: 600, y: 100 },
-            { x: 600, y: 500 },
-            { x: 200, y: 500 },
+            { x: 80, y: 80 },
+            { x: 420, y: 80 },
+            { x: 420, y: 360 },
+            { x: 80, y: 360 },
           ])
           .describe(
             "Polyline points in drawing order (between 2 and 1000). " +
@@ -59,6 +61,8 @@ export function registerPolyline(
       },
     },
     async (args) => {
+      logToolStarted("paint_draw_polyline", args);
+      let outcome: "success" | "error" = "error";
       try {
         const window = await paint.createWindow();
         const result = await window.drawPolyline(args.points, {
@@ -78,8 +82,13 @@ export function registerPolyline(
           ],
           structuredContent: result,
         };
+        outcome = "success";
+        return response;
       } catch (error: unknown) {
         return toolErrorResult("paint_draw_polyline", error);
+      } finally {
+        logToolFinished("paint_draw_polyline", outcome);
+        notifyOperationFinished();
       }
     },
   );

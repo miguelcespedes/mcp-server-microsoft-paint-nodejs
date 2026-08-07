@@ -13,7 +13,9 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { PaintPort } from "../../../domain/drawing.js";
+import { notifyOperationFinished } from "../../win32/process.js";
 import { toolErrorResult } from "../errors.js";
+import { logToolFinished, logToolStarted } from "../tool-logging.js";
 import {
   pointSchema,
   skipToolSelectionSchema,
@@ -38,9 +40,9 @@ export function registerFreehand(
         "If you want the Pencil tool, pass skipToolSelection=false. " +
         "Windows only. " +
         'Example JSON: {"strokes": [{"points": [{"x": 100, "y": 100}, ' +
-        '{"x": 200, "y": 300}, {"x": 300, "y": 100}, {"x": 400, "y": 300}, ' +
-        '{"x": 500, "y": 100}]}, {"points": [{"x": 550, "y": 300}, ' +
-        '{"x": 650, "y": 100}]}], "stepDelayMs": 10}',
+        '{"x": 170, "y": 220}, {"x": 240, "y": 100}, {"x": 310, "y": 220}, ' +
+        '{"x": 380, "y": 100}]}, {"points": [{"x": 120, "y": 300}, ' +
+        '{"x": 220, "y": 360}, {"x": 320, "y": 300}]}], "stepDelayMs": 10}',
       inputSchema: {
         strokes: z
           .array(
@@ -61,16 +63,17 @@ export function registerFreehand(
             {
               points: [
                 { x: 100, y: 100 },
-                { x: 200, y: 300 },
-                { x: 300, y: 100 },
-                { x: 400, y: 300 },
-                { x: 500, y: 100 },
+                { x: 170, y: 220 },
+                { x: 240, y: 100 },
+                { x: 310, y: 220 },
+                { x: 380, y: 100 },
               ],
             },
             {
               points: [
-                { x: 550, y: 300 },
-                { x: 650, y: 100 },
+                { x: 120, y: 300 },
+                { x: 220, y: 360 },
+                { x: 320, y: 300 },
               ],
             },
           ])
@@ -85,6 +88,8 @@ export function registerFreehand(
       },
     },
     async (args) => {
+      logToolStarted("paint_draw_freehand", args);
+      let outcome: "success" | "error" = "error";
       try {
         const window = await paint.createWindow();
         const result = await window.drawFreehand(args.strokes, {
@@ -104,8 +109,13 @@ export function registerFreehand(
           ],
           structuredContent: result,
         };
+        outcome = "success";
+        return response;
       } catch (error: unknown) {
         return toolErrorResult("paint_draw_freehand", error);
+      } finally {
+        logToolFinished("paint_draw_freehand", outcome);
+        notifyOperationFinished();
       }
     },
   );

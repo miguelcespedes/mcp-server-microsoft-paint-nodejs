@@ -12,15 +12,17 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { PaintPort } from "../../domain/drawing.js";
-import { registerFreehand } from "./operations/freehand.operation.js";
-import { registerPolyline } from "./operations/polyline.operation.js";
-import { registerLogarithmicSpiral } from "./operations/logarithmic-spiral.operation.js";
+import type { PaintController } from "../../paint/paint-controller.js";
+import { registerPaintDebugCanvas } from "./operations/paint-debug-canvas.operation.js";
+import { registerPaintDebugUi } from "./operations/paint-debug-ui.operation.js";
+import { registerPaintDraw } from "./operations/paint-draw.operation.js";
 
 export function registerOperations(
   server: McpServer,
   paint: PaintPort,
+  controller: PaintController,
 ): void {
-  registerFreehand(server, paint);
-  registerPolyline(server, paint);
-  registerLogarithmicSpiral(server, paint);
+  registerPaintDraw(server, paint, controller);
+  registerPaintDebugUi(server, controller);
+  registerPaintDebugCanvas(server, controller);
 }

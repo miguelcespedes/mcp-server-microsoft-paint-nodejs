@@ -17,7 +17,18 @@
  */
 
 import * as proc from "./process.js";
+import { createLogger } from "../logging/logger.js";
+import { AutomationClient } from "../windows/automation/automation-client.js";
+import {
+  canvasPointsToClientPoints,
+  type PaintCanvas,
+  resolvePaintCanvas,
+} from "../../paint/discovery/canvas-resolver.js";
+import { discoverPaintInventory } from "../../paint/discovery/paint-ui-inventory.js";
 import type {
+  DrawingRegion,
+  PaintCanvasInfo,
+  PaintWindowOptions,
   DrawOptions,
   FreehandResult,
   PaintPort,
@@ -33,14 +44,8 @@ import type {
 // Constantes de layout medidas en Paint 11.2605 (versión UWP de Windows 11)
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// En el Paint moderno el lienzo NO empieza en (0,0) del área cliente y su
-// posición depende del ancho de la ventana: con la ventana MAXIMIZADA el
-// lienzo queda centrado. Estas constantes se midieron con UI Automation en
-// Paint 11.2605 con la ventana maximizada (monitor de 1920 px lógicos).
-// Las operaciones de dibujo fuerzan la maximización; si usas otra
-// versión de Paint o un monitor de otro ancho, ajusta los valores.
-
-const CANVAS_ORIGIN = { x: 513, y: 220 };
+const logger = createLogger();
+const automationClient = new AutomationClient();
 
 /**
  * Botón "Lápiz" de la barra de herramientas (coordenadas de área cliente).
@@ -54,12 +59,6 @@ const PENCIL_BUTTON = { x: 328, y: 82 };
 
 /** Tiempo máximo de espera para que aparezca la ventana tras lanzar mspaint. */
 const WINDOW_WAIT_TIMEOUT_MS = 10_000;
-
-/**
- * Paint puede exponer la ventana antes de que el lienzo quede realmente listo.
- * Un pequeño margen evita enviar `SendInput` mientras la app sigue cargando.
- */
-const PAINT_READY_DELAY_MS = 1_200;
 
 /**
  * AUMID de la versión moderna de Paint (app UWP de Windows 11).
@@ -279,36 +278,6 @@ function validateCoordinatePair(point: unknown, path: string): void {
   validateIntegerCoordinate(p.y, `${path}.y`);
 }
 
-/**
- * Valida una lista de puntos del lienzo y los convierte a área cliente
- * (lienzo + CANVAS_ORIGIN), comprobando que quepan en el área cliente.
- */
-function validateAndToClient(
-  window: proc.WindowInfo,
-  points: Point2D[],
-  path: string,
-): Point2D[] {
-  const clientPoints = points.map((point) => ({
-    x: point.x + CANVAS_ORIGIN.x,
-    y: point.y + CANVAS_ORIGIN.y,
-  }));
-
-  const clientSize = proc.getClientSize(window.hwnd);
-  clientPoints.forEach((point, index) => {
-    if (point.x >= clientSize.width || point.y >= clientSize.height) {
-      const source = points[index];
-      throw new Error(
-        `${path}[${index}] (${source.x}, ${source.y}) está fuera ` +
-          `del lienzo de Paint (máximo aprox. ` +
-          `${clientSize.width - CANVAS_ORIGIN.x} px en X / ` +
-          `${clientSize.height - CANVAS_ORIGIN.y} px en Y con este layout).`,
-      );
-    }
-  });
-
-  return clientPoints;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // La ventana de Paint (analogía Ext.window.Window)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -318,10 +287,11 @@ function validateAndToClient(
  * primer plano antes de cada dibujo y ejecuta los arrastres sobre su propio
  * HWND (no hay estado global compartido entre instancias).
  */
-function createPaintWindow(
+async function createPaintWindow(
   window: proc.WindowInfo,
   createdBy: WindowCreationMethod,
-): PaintWindow {
+  windowOptions?: PaintWindowOptions,
+): Promise<PaintWindow> {
   const info: PaintWindowInfo = {
     processId: window.pid,
     windowHandle: proc.hwndToHexString(window.hwnd),
@@ -330,22 +300,128 @@ function createPaintWindow(
     createdBy,
   };
 
-  const prepare = async (): Promise<proc.FocusResult> => {
-    // El layout (posición del lienzo y del toolbar) asume la ventana
-    // maximizada: se maximiza también por si el usuario la encogió.
-    await maximizePaintWindow(window.hwnd);
-    const focus = await proc.bringWindowToFront(window.hwnd);
+  let currentCanvas: PaintCanvas = resolvePaintCanvas(info.windowHandle);
 
-    // La ventana puede ser visible antes de que Paint termine de inicializar
-    // el lienzo; si dibujamos demasiado pronto, el cursor recorre la ruta
-    // pero la app aún muestra el indicador de carga y no pinta nada.
-    await proc.sleep(PAINT_READY_DELAY_MS);
+  function toCanvasInfo(canvas: PaintCanvas): PaintCanvasInfo {
+    return {
+      source: canvas.source,
+      width: canvas.width,
+      height: canvas.height,
+      logicalWidth: canvas.logicalWidth,
+      logicalHeight: canvas.logicalHeight,
+      clientOrigin: canvas.clientOrigin,
+      screenOrigin: canvas.screenOrigin,
+      ...(canvas.elementName ? { elementName: canvas.elementName } : {}),
+      ...(canvas.automationId ? { automationId: canvas.automationId } : {}),
+    };
+  }
 
-    return focus;
+  function resolveDrawingRegion(canvas: PaintCanvas): DrawingRegion | undefined {
+    const region = windowOptions?.drawingRegion;
+    if (!region) {
+      return undefined;
+    }
+
+    if (
+      region.x < 0 ||
+      region.y < 0 ||
+      region.width <= 0 ||
+      region.height <= 0 ||
+      region.x + region.width > canvas.logicalWidth ||
+      region.y + region.height > canvas.logicalHeight
+    ) {
+      throw new Error(
+        `The requested drawingRegion (${region.x}, ${region.y}, ${region.width}, ${region.height}) does not fit inside the logical canvas ${canvas.logicalWidth}x${canvas.logicalHeight}.`,
+      );
+    }
+
+    return region;
+  }
+
+  function mapPointsIntoDrawingRegion(
+    points: Point2D[],
+    canvas: PaintCanvas,
+    path: string,
+  ): Point2D[] {
+    const region = resolveDrawingRegion(canvas);
+    if (!region) {
+      return points;
+    }
+
+    return points.map((point, index) => {
+      if (point.x > region.width || point.y > region.height) {
+        throw new Error(
+          `${path}[${index}] (${point.x}, ${point.y}) is outside the configured drawingRegion ${region.width}x${region.height}.`,
+        );
+      }
+
+      return {
+        x: region.x + point.x,
+        y: region.y + point.y,
+      };
+    });
+  }
+
+  async function refreshCanvas(): Promise<PaintCanvas> {
+    try {
+      const discovered = await discoverPaintInventory(
+        automationClient,
+        info.windowHandle,
+        window.pid,
+        window.className,
+        window.title,
+        {
+          maxDepth: 8,
+          includeBoundingRectangles: true,
+        },
+      );
+      currentCanvas = resolvePaintCanvas(info.windowHandle, discovered.inventory);
+    } catch (error) {
+      logger.debug("Paint window canvas inventory fallback engaged", {
+        windowHandle: info.windowHandle,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      currentCanvas = resolvePaintCanvas(info.windowHandle);
+    }
+
+    logger.debug("Paint window canvas refreshed", {
+      windowHandle: info.windowHandle,
+      canvas: currentCanvas,
+    });
+    return currentCanvas;
+  }
+
+  const prepare = async (): Promise<{
+    focus: proc.FocusResult;
+    canvas: PaintCanvas;
+  }> => {
+    try {
+      await proc.ensureWindowReady(window.hwnd, {
+        maximize: true,
+        foreground: true,
+        logger,
+      });
+      return {
+        focus: { success: true },
+        canvas: await refreshCanvas(),
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        focus: { success: false, warning: message },
+        canvas: currentCanvas,
+      };
+    }
   };
 
-  return {
+  const paintWindow: PaintWindow = {
     info,
+    get canvas() {
+      return toCanvasInfo(currentCanvas);
+    },
+    get drawingRegion() {
+      return resolveDrawingRegion(currentCanvas);
+    },
 
     async drawPolyline(
       points: Point2D[],
@@ -368,10 +444,15 @@ function createPaintWindow(
         validateCoordinatePair(point, `points[${index}]`);
       });
 
-      // Conversión de lienzo a área cliente y validación de límites.
-      const clientPoints = validateAndToClient(window, points, "points");
+      const prepared = await prepare();
+      if (!prepared.focus.success) {
+        throw new Error(prepared.focus.warning ?? "Paint could not be prepared for drawing.");
+      }
 
-      const focus = await prepare();
+      const canvas = prepared.canvas;
+
+      const mappedPoints = mapPointsIntoDrawingRegion(points, canvas, "points");
+      const clientPoints = canvasPointsToClientPoints(canvas, mappedPoints, "points");
       if (options.skipToolSelection === false) {
         await selectPencilTool(window.hwnd);
       }
@@ -393,7 +474,7 @@ function createPaintWindow(
         pointCount: points.length,
         startScreen: screenPoints[0],
         endScreen: screenPoints[screenPoints.length - 1],
-        ...(focus.success ? {} : { warning: focus.warning }),
+        ...(prepared.focus.success ? {} : { warning: prepared.focus.warning }),
       };
     },
 
@@ -443,16 +524,24 @@ function createPaintWindow(
         );
       });
 
-      // Conversión de lienzo a área cliente y validación de límites.
+      const prepared = await prepare();
+      if (!prepared.focus.success) {
+        throw new Error(prepared.focus.warning ?? "Paint could not be prepared for drawing.");
+      }
+
+      const canvas = prepared.canvas;
+
       const clientStrokes = strokes.map((stroke, strokeIndex) =>
-        validateAndToClient(
-          window,
-          stroke.points,
+        canvasPointsToClientPoints(
+          canvas,
+          mapPointsIntoDrawingRegion(
+            stroke.points,
+            canvas,
+            `strokes[${strokeIndex}].points`,
+          ),
           `strokes[${strokeIndex}].points`,
         ),
       );
-
-      const focus = await prepare();
       if (options.skipToolSelection === false) {
         await selectPencilTool(window.hwnd);
       }
@@ -482,10 +571,20 @@ function createPaintWindow(
           screenStrokes[screenStrokes.length - 1][
             screenStrokes[screenStrokes.length - 1].length - 1
           ],
-        ...(focus.success ? {} : { warning: focus.warning }),
+        ...(prepared.focus.success ? {} : { warning: prepared.focus.warning }),
       };
     },
   };
+
+  // La ventana debe nacer ya preparada y con su canvas real resuelto para que
+  // cualquier operación que consulte window.canvas antes de dibujar (p. ej.
+  // la espiral adaptativa) use dimensiones correctas y no un fallback frío.
+  const prepared = await prepare();
+  if (!prepared.focus.success) {
+    throw new Error(prepared.focus.warning ?? "Paint could not be prepared.");
+  }
+
+  return paintWindow;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -498,20 +597,20 @@ function createPaintWindow(
  */
 export function createWin32PaintDriver(): PaintPort {
   return {
-    async createWindow(): Promise<PaintWindow> {
+    async createWindow(options?: PaintWindowOptions): Promise<PaintWindow> {
       const existing = findPaintWindows();
 
       if (existing.length === 0) {
         // No hay Paint abierto: se lanza y su ventana ya trae un lienzo limpio.
         const window = await launchPaintWindow();
-        return createPaintWindow(window, "opened");
+        return createPaintWindow(window, "opened", options);
       }
 
       // Paint ya está abierto: crear una ventana nueva (proceso mspaint con
       // respaldo por ShellExecuteW) para no superponer dibujos de ventanas
       // anteriores.
       const { window: fresh, createdBy } = await createNewPaintWindow();
-      return createPaintWindow(fresh, createdBy);
+      return createPaintWindow(fresh, createdBy, options);
     },
   };
 }

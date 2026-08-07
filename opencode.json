@@ -1,0 +1,27 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "paint-local": {
+      "type": "local",
+      "command": [
+        "node",
+        "dist/server.js"
+      ],
+      "cwd": ".",
+      "enabled": true
+    }
+  },
+  "permission": {
+    "bash": {
+      "node *": "deny",
+      "node dist/server.js": "allow",
+      "npm test*": "deny",
+      "npm run test*": "deny",
+      "npm run build*": "deny",
+      "npm install*": "deny",
+      "npm ci*": "deny",
+      "npx *": "deny",
+      "*": "ask"
+    }
+  }
+}
