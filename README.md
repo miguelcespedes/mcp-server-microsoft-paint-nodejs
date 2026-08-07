@@ -121,7 +121,7 @@ Common parameters:
 
 `greatIcosahedron` shares the icosahedron's exact 12-vertex/30-edge wireframe; `starFaces: true` adds its 20 crossing star faces (visual approximation). The `solid` list covers the platonic solids plus the Kepler-Poinsot star polyhedron and the Stella Octangula compound; `tesseract` projects 4D→3D with perspective (camera at 2.5 in the w axis) then 3D→2D. Every edge is a single 2-point stroke, well under the 500-stroke limit (dodecahedron: 30, tesseract: 32, torus 16×8: 24).
 
-Composition: pass `generators: [...]` (1–100) to draw compound figures in one call — e.g. a house = `rectangle` + `regularPolygon`(3 sides). A single generator is rendered as one drag; multiple generators become one drag each (`disk`, `grid` and `dotsAlongPath` expand to several strokes). Output echoes `generators` plus the draw result (window info, `pointCount`/`strokeCount`/`totalPoints`, `startScreen`, `endScreen`, `canvas`, `canvasBounds`).
+Composition: pass `generators: [...]` (1–100) to draw compound figures in one call — e.g. a compass rose = `starPolygon` + `circle` + `arc` around a common center. A single generator is rendered as one drag; multiple generators become one drag each (`disk`, `grid` and `dotsAlongPath` expand to several strokes). Output echoes `generators` plus the draw result (window info, `pointCount`/`strokeCount`/`totalPoints`, `startScreen`, `endScreen`, `canvas`, `canvasBounds`).
 
 **Design space + composition helpers.** `src/domain/figures.ts` also exports pure transforms — `translatePoints`, `scalePoints`, `rotatePoints`, `placePoints(angleDeg, radius, center)`, `boundingBox`, `fitStrokes` — so scenes can be defined locally at the origin and composed (e.g. planets placed on orbits) without computing absolute coordinates by hand.
 
@@ -149,17 +149,22 @@ All tools share the same behavior: a log line is written to stderr (`tool starte
 
 Every example is a single `paint_draw` call. With `fit: "contain"` you design in your own coordinate space (negative coordinates included) and the server scales and centers the drawing on the canvas.
 
-### 1. House — 2D composition
+### 1. Tesseract — 4D hypercube wireframe
+
+The 16 vertices of a hypercube (±1)⁴ are projected to 3D with perspective in the w axis, then to 2D: 32 edges, one stroke per edge. The classic "inner and outer cube" look:
 
 ```json
 {
   "mode": "generator",
+  "tool": "pencil",
+  "fit": "contain",
   "generators": [
-    { "kind": "rectangle", "x": 150, "y": 240, "width": 200, "height": 140 },
-    { "kind": "regularPolygon", "cx": 250, "cy": 180, "radius": 120, "sides": 3 }
+    { "kind": "solid", "solid": "tesseract", "size": 110, "rotX": 15, "rotY": -30, "projection": "perspective" }
   ]
 }
 ```
+
+Variant: `rotX: 0, rotY: 45` aligns both 4D cells in front of each other (the perfect double-cube view).
 
 ### 2. Solar system — `fit` + `tool: "pencil"`
 
@@ -183,7 +188,7 @@ Disk sun, orbits as circles, planets placed at angles; designed at the origin an
 
 ### 3. Pac-Man board — `grid` + `dotsAlongPath`
 
-Maze walls as rectangles, pellet dots in corridors via `grid`, power pellets as `disk`, and a dotted route with `dotsAlongPath` (design space `0..1000 × 0..600`):
+Maze walls as rectangles, pellet dots in corridors via `grid`, power pellets as `disk`, and a dotted route with `dotsAlongPath` (design space `0..1000 × 0..600`, one call, 9 generators):
 
 ```json
 {
@@ -196,17 +201,35 @@ Maze walls as rectangles, pellet dots in corridors via `grid`, power pellets as 
     { "kind": "rectangle", "x": 780, "y": 20, "width": 200, "height": 120 },
     { "kind": "rectangle", "x": 20, "y": 460, "width": 200, "height": 120 },
     { "kind": "rectangle", "x": 780, "y": 460, "width": 200, "height": 120 },
-    { "kind": "grid", "x": 60, "y": 200, "width": 880, "height": 200, "cols": 22, "rows": 10, "shape": "circle", "radius": 3 },
+    {
+      "kind": "grid",
+      "x": 60,
+      "y": 200,
+      "width": 880,
+      "height": 200,
+      "cols": 22,
+      "rows": 10,
+      "shape": "circle",
+      "radius": 3
+    },
     { "kind": "disk", "cx": 100, "cy": 100, "radius": 12 },
     { "kind": "disk", "cx": 900, "cy": 500, "radius": 12 },
-    { "kind": "dotsAlongPath", "path": [{ "x": 240, "y": 60 }, { "x": 760, "y": 60 }], "radius": 3, "spacing": 24 }
+    {
+      "kind": "dotsAlongPath",
+      "path": [
+        { "x": 240, "y": 60 },
+        { "x": 760, "y": 60 }
+      ],
+      "radius": 3,
+      "spacing": 24
+    }
   ]
 }
 ```
 
 ### 4. 3D solids composition — `solid` + `torus` + `torusKnot`
 
-Dodecahedron with perspective, tesseract in 4D perspective, torus and a (2, 3) torus knot:
+Four wireframe solids in one call, centered at the origin and fitted to the canvas — note that every edge is a single 2-point stroke (30 + 32 + 24 + 1 = 87 strokes):
 
 ```json
 {
@@ -214,10 +237,37 @@ Dodecahedron with perspective, tesseract in 4D perspective, torus and a (2, 3) t
   "tool": "pencil",
   "fit": "contain",
   "generators": [
-    { "kind": "solid", "solid": "dodecahedron", "size": 100, "rotX": -20, "rotY": 25, "projection": "perspective" },
-    { "kind": "solid", "solid": "tesseract", "size": 110, "rotX": 15, "rotY": -30, "projection": "perspective" },
-    { "kind": "torus", "majorRadius": 90, "tubeRadius": 30, "segments": 16, "rings": 8 },
-    { "kind": "torusKnot", "p": 2, "q": 3, "radius": 80, "tubeRadius": 22, "steps": 400 }
+    {
+      "kind": "solid",
+      "solid": "dodecahedron",
+      "size": 100,
+      "rotX": -20,
+      "rotY": 25,
+      "projection": "perspective"
+    },
+    {
+      "kind": "solid",
+      "solid": "tesseract",
+      "size": 110,
+      "rotX": 15,
+      "rotY": -30,
+      "projection": "perspective"
+    },
+    {
+      "kind": "torus",
+      "majorRadius": 90,
+      "tubeRadius": 30,
+      "segments": 16,
+      "rings": 8
+    },
+    {
+      "kind": "torusKnot",
+      "p": 2,
+      "q": 3,
+      "radius": 80,
+      "tubeRadius": 22,
+      "steps": 400
+    }
   ]
 }
 ```
@@ -387,6 +437,31 @@ Small circles scattered along a polyline path (22 dots over ~410 px):
 }
 ```
 
+### 12. Vitruvian Man — negative coordinates + `fit: "contain"`
+
+Leonardo's proportions as a pure composition: the circle is centered on the navel (the design-space origin), the square is centered on the pubis (`y = -200`, its top edge at shoulder height `y = 200`), and the figure is a set of `polyline`s — the squared arms lie on the square's top edge, the raised hands and spread feet touch the circle (`240² + 320² = 400²`). Negative coordinates are allowed in the design space; `fit: "contain"` maps everything onto the canvas (one call, 11 generators, verified bounds `70,25..430,475` on a 500×500 canvas):
+
+```json
+{
+  "mode": "generator",
+  "tool": "pencil",
+  "fit": "contain",
+  "generators": [
+    { "kind": "circle", "cx": 0, "cy": 0, "radius": 400 },
+    { "kind": "rectangle", "x": -400, "y": -600, "width": 800, "height": 800 },
+    { "kind": "circle", "cx": 0, "cy": 350, "radius": 50 },
+    { "kind": "polyline", "points": [{ "x": -400, "y": 200 }, { "x": 400, "y": 200 }] },
+    { "kind": "polyline", "points": [{ "x": -200, "y": 200 }, { "x": -240, "y": 320 }] },
+    { "kind": "polyline", "points": [{ "x": 200, "y": 200 }, { "x": 240, "y": 320 }] },
+    { "kind": "polyline", "points": [{ "x": 0, "y": 300 }, { "x": 0, "y": -200 }] },
+    { "kind": "polyline", "points": [{ "x": 0, "y": -200 }, { "x": 0, "y": -600 }] },
+    { "kind": "polyline", "points": [{ "x": 0, "y": -200 }, { "x": -240, "y": -320 }] },
+    { "kind": "polyline", "points": [{ "x": 0, "y": -200 }, { "x": 240, "y": -320 }] },
+    { "kind": "disk", "cx": 0, "cy": 0, "radius": 6 }
+  ]
+}
+```
+
 ## The Canvas Resolver
 
 Drawing coordinates are **canvas-relative**: `(0,0)` is the top-left of the white page, and the drawing space is the image's logical size (read from the `CanvasSizeTextBlock` automation element, e.g. 500×500), not the window size.
@@ -400,6 +475,8 @@ Resolution strategy (in order):
 Coordinate mapping: logical canvas → drawable area (minus inset) → client pixels → screen pixels (`clientToScreen`). Every point is validated against the canvas and rejected with `DRAW_BOUNDS_OUTSIDE_CANVAS` before any mouse input is injected.
 
 ## Window Lifecycle
+
+The driver keeps **one managed Paint window**: the first `paint_draw` call opens it, and subsequent calls reuse it and clear its canvas first (`Ctrl+A`, `Delete`), so no `mspaint` processes accumulate. On a fresh server start the driver adopts the topmost existing Paint window (typically its own from a previous process) instead of opening another. The driver never touches windows it did not create when they are older/background (it only adopts the topmost one on startup).
 
 Each operation goes through `PaintSessionStore.ensureReady`:
 

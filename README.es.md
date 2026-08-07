@@ -121,7 +121,7 @@ Parámetros comunes:
 
 `greatIcosahedron` comparte el esqueleto exacto del icosaedro (12 vértices / 30 aristas); `starFaces: true` añade sus 20 caras estrelladas que se cruzan (aproximación visual). La lista de `solid` cubre los sólidos platónicos más el poliedro estrellado de Kepler-Poinsot y el compuesto de la estrella octángula; `tesseract` proyecta 4D→3D con perspectiva (cámara a 2.5 en el eje w) y luego 3D→2D. Cada arista es un stroke de 2 puntos, muy por debajo del límite de 500 (dodecaedro: 30, tesseract: 32, toro 16×8: 24).
 
-Composición: pasa `generators: [...]` (1–100) para dibujar figuras compuestas en una sola llamada — p. ej. una casa = `rectangle` + `regularPolygon`(3 lados). Un solo generador se dibuja con un arrastre; varios generadores se dibujan con un arrastre cada uno (`disk`, `grid` y `dotsAlongPath` se expanden a varios trazos). La salida repite `generators` junto con el resultado del dibujo (info de la ventana, `pointCount`/`strokeCount`/`totalPoints`, `startScreen`, `endScreen`, `canvas`, `canvasBounds`).
+Composición: pasa `generators: [...]` (1–100) para dibujar figuras compuestas en una sola llamada — p. ej. una rosa de los vientos = `starPolygon` + `circle` + `arc` alrededor de un centro común. Un solo generador se dibuja con un arrastre; varios generadores se dibujan con un arrastre cada uno (`disk`, `grid` y `dotsAlongPath` se expanden a varios trazos). La salida repite `generators` junto con el resultado del dibujo (info de la ventana, `pointCount`/`strokeCount`/`totalPoints`, `startScreen`, `endScreen`, `canvas`, `canvasBounds`).
 
 **Espacio de diseño + helpers de composición.** `src/domain/figures.ts` también exporta transformaciones puras — `translatePoints`, `scalePoints`, `rotatePoints`, `placePoints(angleDeg, radius, center)`, `boundingBox`, `fitStrokes` — para definir escenas en el origen y componerlas (p. ej. planetas colocados sobre órbitas) sin calcular coordenadas absolutas a mano.
 
@@ -149,17 +149,22 @@ Todas las herramientas comparten el mismo comportamiento: se escribe una línea 
 
 Cada ejemplo es una sola llamada a `paint_draw`. Con `fit: "contain"` diseñas en tu propio espacio de coordenadas (negativas incluidas) y el servidor escala y centra el dibujo en el lienzo.
 
-### 1. Casa — composición 2D
+### 1. Tesseract — hipercubo 4D en alambre
+
+Los 16 vértices de un hipercubo (±1)⁴ se proyectan a 3D con perspectiva en el eje w y luego a 2D: 32 aristas, un stroke por arista. El clásico look de "cubo interior y exterior":
 
 ```json
 {
   "mode": "generator",
+  "tool": "pencil",
+  "fit": "contain",
   "generators": [
-    { "kind": "rectangle", "x": 150, "y": 240, "width": 200, "height": 140 },
-    { "kind": "regularPolygon", "cx": 250, "cy": 180, "radius": 120, "sides": 3 }
+    { "kind": "solid", "solid": "tesseract", "size": 110, "rotX": 15, "rotY": -30, "projection": "perspective" }
   ]
 }
 ```
+
+Variante: `rotX: 0, rotY: 45` alinea las dos celdas 4D una frente a otra (la vista de cubo doble perfecto).
 
 ### 2. Sistema solar — `fit` + `tool: "pencil"`
 
@@ -183,7 +188,7 @@ Sol con `disk`, órbitas como círculos y planetas en ángulos; diseñado en el 
 
 ### 3. Tablero de Pac-Man — `grid` + `dotsAlongPath`
 
-Paredes del laberinto como rectángulos, puntos de los pasillos con `grid`, píldoras de poder como `disk` y una ruta punteada con `dotsAlongPath` (espacio de diseño `0..1000 × 0..600`):
+Paredes del laberinto como rectángulos, puntos de los pasillos con `grid`, píldoras de poder como `disk` y una ruta punteada con `dotsAlongPath` (espacio de diseño `0..1000 × 0..600`, una sola llamada, 9 generadores):
 
 ```json
 {
@@ -196,17 +201,35 @@ Paredes del laberinto como rectángulos, puntos de los pasillos con `grid`, píl
     { "kind": "rectangle", "x": 780, "y": 20, "width": 200, "height": 120 },
     { "kind": "rectangle", "x": 20, "y": 460, "width": 200, "height": 120 },
     { "kind": "rectangle", "x": 780, "y": 460, "width": 200, "height": 120 },
-    { "kind": "grid", "x": 60, "y": 200, "width": 880, "height": 200, "cols": 22, "rows": 10, "shape": "circle", "radius": 3 },
+    {
+      "kind": "grid",
+      "x": 60,
+      "y": 200,
+      "width": 880,
+      "height": 200,
+      "cols": 22,
+      "rows": 10,
+      "shape": "circle",
+      "radius": 3
+    },
     { "kind": "disk", "cx": 100, "cy": 100, "radius": 12 },
     { "kind": "disk", "cx": 900, "cy": 500, "radius": 12 },
-    { "kind": "dotsAlongPath", "path": [{ "x": 240, "y": 60 }, { "x": 760, "y": 60 }], "radius": 3, "spacing": 24 }
+    {
+      "kind": "dotsAlongPath",
+      "path": [
+        { "x": 240, "y": 60 },
+        { "x": 760, "y": 60 }
+      ],
+      "radius": 3,
+      "spacing": 24
+    }
   ]
 }
 ```
 
 ### 4. Composición de sólidos 3D — `solid` + `torus` + `torusKnot`
 
-Dodecaedro en perspectiva, tesseract en perspectiva 4D, toro y un nudo toroidal (2, 3):
+Cuatro sólidos 3D en alambre en una sola llamada, centrados en el origen y ajustados al lienzo — nótese que cada arista es un stroke de 2 puntos (30 + 32 + 24 + 1 = 87 trazos):
 
 ```json
 {
@@ -214,10 +237,37 @@ Dodecaedro en perspectiva, tesseract en perspectiva 4D, toro y un nudo toroidal 
   "tool": "pencil",
   "fit": "contain",
   "generators": [
-    { "kind": "solid", "solid": "dodecahedron", "size": 100, "rotX": -20, "rotY": 25, "projection": "perspective" },
-    { "kind": "solid", "solid": "tesseract", "size": 110, "rotX": 15, "rotY": -30, "projection": "perspective" },
-    { "kind": "torus", "majorRadius": 90, "tubeRadius": 30, "segments": 16, "rings": 8 },
-    { "kind": "torusKnot", "p": 2, "q": 3, "radius": 80, "tubeRadius": 22, "steps": 400 }
+    {
+      "kind": "solid",
+      "solid": "dodecahedron",
+      "size": 100,
+      "rotX": -20,
+      "rotY": 25,
+      "projection": "perspective"
+    },
+    {
+      "kind": "solid",
+      "solid": "tesseract",
+      "size": 110,
+      "rotX": 15,
+      "rotY": -30,
+      "projection": "perspective"
+    },
+    {
+      "kind": "torus",
+      "majorRadius": 90,
+      "tubeRadius": 30,
+      "segments": 16,
+      "rings": 8
+    },
+    {
+      "kind": "torusKnot",
+      "p": 2,
+      "q": 3,
+      "radius": 80,
+      "tubeRadius": 22,
+      "steps": 400
+    }
   ]
 }
 ```
@@ -387,6 +437,31 @@ Círculos pequeños distribuidos a lo largo de un sendero polilínea (22 puntos 
 }
 ```
 
+### 12. Hombre de Vitruvio — coordenadas negativas + `fit: "contain"`
+
+Las proporciones de Leonardo como composición pura: el círculo está centrado en el ombligo (el origen del espacio de diseño), el cuadrado en el pubis (`y = -200`, con su borde superior a la altura de los hombros, `y = 200`), y la figura es un conjunto de `polyline`s — los brazos en cuadrado descansan sobre el borde superior del cuadrado, y las manos elevadas y los pies abiertos tocan el círculo (`240² + 320² = 400²`). Las coordenadas negativas están permitidas en el espacio de diseño; `fit: "contain"` lo mapea todo al lienzo (una sola llamada, 11 generadores, bounds verificados `70,25..430,475` sobre un lienzo de 500×500):
+
+```json
+{
+  "mode": "generator",
+  "tool": "pencil",
+  "fit": "contain",
+  "generators": [
+    { "kind": "circle", "cx": 0, "cy": 0, "radius": 400 },
+    { "kind": "rectangle", "x": -400, "y": -600, "width": 800, "height": 800 },
+    { "kind": "circle", "cx": 0, "cy": 350, "radius": 50 },
+    { "kind": "polyline", "points": [{ "x": -400, "y": 200 }, { "x": 400, "y": 200 }] },
+    { "kind": "polyline", "points": [{ "x": -200, "y": 200 }, { "x": -240, "y": 320 }] },
+    { "kind": "polyline", "points": [{ "x": 200, "y": 200 }, { "x": 240, "y": 320 }] },
+    { "kind": "polyline", "points": [{ "x": 0, "y": 300 }, { "x": 0, "y": -200 }] },
+    { "kind": "polyline", "points": [{ "x": 0, "y": -200 }, { "x": 0, "y": -600 }] },
+    { "kind": "polyline", "points": [{ "x": 0, "y": -200 }, { "x": -240, "y": -320 }] },
+    { "kind": "polyline", "points": [{ "x": 0, "y": -200 }, { "x": 240, "y": -320 }] },
+    { "kind": "disk", "cx": 0, "cy": 0, "radius": 6 }
+  ]
+}
+```
+
 ## El resolver del lienzo
 
 Las coordenadas de dibujo son **relativas al lienzo**: `(0,0)` es la esquina superior izquierda de la página blanca y el espacio de dibujo es el tamaño lógico de la imagen (leído del elemento de automatización `CanvasSizeTextBlock`, p. ej. 500×500), no el tamaño de la ventana.
@@ -400,6 +475,8 @@ Estrategia de resolución (en orden):
 Mapeo de coordenadas: lienzo lógico → área dibujable (menos el inset) → píxeles de cliente → píxeles de pantalla (`clientToScreen`). Cada punto se valida contra el lienzo y se rechaza con `DRAW_BOUNDS_OUTSIDE_CANVAS` antes de inyectar cualquier entrada de mouse.
 
 ## Ciclo de vida de la ventana
+
+El driver mantiene **una única ventana de Paint gestionada**: la primera llamada a `paint_draw` la abre, y las siguientes la reutilizan vaciando antes su lienzo (`Ctrl+A`, `Supr`), de modo que no se acumulan procesos de `mspaint`. Al arrancar de nuevo, el driver adopta la ventana de Paint superior (normalmente la suya de un proceso anterior) en vez de abrir otra; nunca toca ventanas que no creó cuando son antiguas o de fondo.
 
 Cada operación pasa por `PaintSessionStore.ensureReady`:
 
