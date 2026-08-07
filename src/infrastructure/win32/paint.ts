@@ -405,9 +405,18 @@ async function createPaintWindow(
     return { minX, minY, maxX, maxY };
   }
 
+  /**
+   * El mapeo lógico→cliente (canvasPointsToClientPoints) escala proporcional-
+   * mente al rectángulo físico del elemento canvas. Eso es correcto solo si
+   * ese rect es el lienzo COMPLETO a zoom uniforme. Si el lienzo es más grande
+   * que la vista (o está con zoom > 100%), el rect queda recortado y los
+   * ratios por eje dejan de coincidir → el dibujo caería en el sitio
+   * equivocado. Antes de resolver, se fuerza "Ajustar a la ventana" (Fit to
+   * window) vía UIA para dejar el estado determinista.
+   */
   async function refreshCanvas(): Promise<PaintCanvas> {
     try {
-      const discovered = await discoverPaintInventory(
+      let discovered = await discoverPaintInventory(
         automationClient,
         info.windowHandle,
         window.pid,
@@ -419,6 +428,66 @@ async function createPaintWindow(
         },
       );
       currentCanvas = resolvePaintCanvas(info.windowHandle, discovered.inventory);
+
+      const clientSize = proc.getClientSize(window.hwnd);
+      const scaleX = currentCanvas.width / currentCanvas.logicalWidth;
+      const scaleY = currentCanvas.height / currentCanvas.logicalHeight;
+      const uniformZoom =
+        Math.abs(scaleX - scaleY) / Math.max(scaleX, scaleY, 1e-9) < 0.02;
+      const fullyVisible =
+        currentCanvas.width <= clientSize.width &&
+        currentCanvas.height <= clientSize.height;
+      const needsFit = !(uniformZoom && fullyVisible);
+
+      if (needsFit) {
+        const fitButton = discovered.inventory.elements.find((element) => {
+          const name = (element.name ?? "")
+            .replace(/[^\x20-\x7e]/g, "")
+            .toLowerCase();
+          return (
+            element.visible &&
+            element.controlType === "Button" &&
+            (name.includes("ajustar") ||
+              name.includes("fit") ||
+              name.includes("window"))
+          );
+        });
+
+        if (fitButton) {
+          logger.debug("Fitting oversized canvas to window before drawing", {
+            windowHandle: info.windowHandle,
+            canvas: {
+              width: currentCanvas.width,
+              height: currentCanvas.height,
+              logicalWidth: currentCanvas.logicalWidth,
+              logicalHeight: currentCanvas.logicalHeight,
+            },
+          });
+          await automationClient.invoke({
+            windowHandleHex: info.windowHandle,
+            processId: window.pid,
+            className: window.className,
+            windowTitle: window.title,
+            runtimeId: fitButton.runtimeId,
+          });
+          await proc.sleep(800);
+          discovered = await discoverPaintInventory(
+            automationClient,
+            info.windowHandle,
+            window.pid,
+            window.className,
+            window.title,
+            {
+              maxDepth: 8,
+              includeBoundingRectangles: true,
+            },
+          );
+          currentCanvas = resolvePaintCanvas(
+            info.windowHandle,
+            discovered.inventory,
+          );
+        }
+      }
     } catch (error) {
       logger.debug("Paint window canvas inventory fallback engaged", {
         windowHandle: info.windowHandle,
