@@ -13,6 +13,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { PaintPort } from "../../domain/drawing.js";
 import type { PaintController } from "../../paint/paint-controller.js";
+import { registerPaintCanvas } from "./operations/paint-canvas.operation.js";
 import { registerPaintDebugCanvas } from "./operations/paint-debug-canvas.operation.js";
 import { registerPaintDebugUi } from "./operations/paint-debug-ui.operation.js";
 import { registerPaintDraw } from "./operations/paint-draw.operation.js";
@@ -25,4 +26,5 @@ export function registerOperations(
   registerPaintDraw(server, paint);
   registerPaintDebugUi(server, controller);
   registerPaintDebugCanvas(server, controller);
+  registerPaintCanvas(server, controller);
 }

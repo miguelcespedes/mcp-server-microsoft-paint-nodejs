@@ -7,6 +7,8 @@ import type {
   AutomationInventoryResult,
   AutomationInvokePayload,
   AutomationInvokeResult,
+  AutomationSetValuePayload,
+  AutomationSetValueResult,
 } from "./automation-types.js";
 
 function normalizePatterns(value: unknown): string[] {
@@ -160,5 +162,11 @@ export class AutomationClient {
     payload: AutomationInvokePayload,
   ): Promise<AutomationInvokeResult> {
     return runBridge<AutomationInvokeResult>("invoke", payload);
+  }
+
+  async setValue(
+    payload: AutomationSetValuePayload,
+  ): Promise<AutomationSetValueResult> {
+    return runBridge<AutomationSetValueResult>("set-value", payload);
   }
 }

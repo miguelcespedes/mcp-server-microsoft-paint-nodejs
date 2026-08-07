@@ -63,3 +63,17 @@ export interface AutomationInvokeResult {
   success: boolean;
   pattern: string;
 }
+
+export interface AutomationSetValuePayload {
+  windowHandleHex: string;
+  processId?: number;
+  className?: string;
+  windowTitle?: string;
+  runtimeId: number[];
+  value: string;
+}
+
+export interface AutomationSetValueResult {
+  success: boolean;
+  pattern: string;
+}

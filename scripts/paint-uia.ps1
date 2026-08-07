@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet('inventory', 'invoke')]
+  [ValidateSet('inventory', 'invoke', 'set-value')]
   [string]$Action,
 
   [Parameter(Mandatory = $true)]
@@ -336,6 +336,50 @@ function Invoke-Element {
   throw 'No supported automation pattern available to invoke the target element.'
 }
 
+function Set-ElementValue {
+  param(
+    [Windows.Automation.AutomationElement]$Element,
+    [string]$Value
+  )
+
+  try {
+    $valuePattern = [Windows.Automation.ValuePattern]$Element.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
+    if ($null -ne $valuePattern) {
+      $valuePattern.SetValue($Value)
+      return 'Value'
+    }
+  } catch {
+  }
+
+  try {
+    $rangePattern = [Windows.Automation.RangeValuePattern]$Element.GetCurrentPattern([Windows.Automation.RangeValuePattern]::Pattern)
+    if ($null -ne $rangePattern) {
+      $doubleValue = [double]::Parse($Value, [System.Globalization.CultureInfo]::InvariantCulture)
+      $rangePattern.SetValue($doubleValue)
+      return 'RangeValue'
+    }
+  } catch {
+  }
+
+  try {
+    $descendants = $Element.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
+    for ($i = 0; $i -lt $descendants.Count; $i += 1) {
+      try {
+        $child = $descendants.Item($i)
+        $childPattern = [Windows.Automation.ValuePattern]$child.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
+        if ($null -ne $childPattern) {
+          $childPattern.SetValue($Value)
+          return 'ValueDescendant'
+        }
+      } catch {
+      }
+    }
+  } catch {
+  }
+
+  throw 'No set-value automation pattern available for the target element.'
+}
+
 try {
   $payload = ConvertFrom-Base64Json $PayloadBase64
   $root = Get-PaintRootElement $payload
@@ -371,6 +415,22 @@ try {
     }
 
     $pattern = Invoke-Element -Element $target
+    $response = [pscustomobject]@{
+      success = $true
+      pattern = $pattern
+    }
+
+    $response | ConvertTo-Json -Depth 50 -Compress
+    exit 0
+  }
+
+  if ($Action -eq 'set-value') {
+    $target = Find-ElementByRuntimeId -Root $root -TargetRuntimeId @($payload.runtimeId)
+    if ($null -eq $target) {
+      throw 'Target automation element was not found in the current Paint UI tree.'
+    }
+
+    $pattern = Set-ElementValue -Element $target -Value ([string]$payload.value)
     $response = [pscustomobject]@{
       success = $true
       pattern = $pattern
