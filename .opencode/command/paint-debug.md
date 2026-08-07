@@ -9,14 +9,12 @@ Workflow:
 
 1. Confirm which `paint_*` tools are available.
 2. Prefer MCP tools over bash for validation.
-3. If the user mentions invisible shapes, first inspect:
-   - `paint_active_canvas_debug`
-   - `paint_shape_style_debug`
-   - `paint_layers_debug`
-4. If the user mentions selection issues, inspect:
-   - `paint_inventory`
-   - `paint_select_shape`
-5. Summarize findings from actual MCP responses only.
+3. To understand where drawing lands, inspect:
+   - `paint_debug_canvas`
+4. To inspect the general UI tree (groups, language, controls), inspect:
+   - `paint_debug_ui`
+5. Draw with `paint_draw` (mode `generator` with `generators[]`, or `freehand`).
+6. Summarize findings from actual MCP responses only.
 
 User request:
 

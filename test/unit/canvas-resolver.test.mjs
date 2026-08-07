@@ -1,9 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  canvasBoundsToClientDrag,
-  ensureBoundsInsideCanvas,
-  validateDurationMs,
+  canvasPointsToClientPoints,
+  ensurePointsInsideCanvas,
 } from "../../dist/paint/discovery/canvas-resolver.js";
 
 const canvas = {
@@ -11,37 +10,48 @@ const canvas = {
   clientOrigin: { x: 100, y: 200 },
   width: 800,
   height: 600,
+  logicalWidth: 800,
+  logicalHeight: 600,
   source: "fixed-layout",
 };
 
-test("ensureBoundsInsideCanvas accepts valid ellipse bounds", () => {
+test("ensurePointsInsideCanvas accepts valid points", () => {
   assert.doesNotThrow(() =>
-    ensureBoundsInsideCanvas(canvas, { x: 10, y: 20, width: 100, height: 80 }),
+    ensurePointsInsideCanvas(canvas, [{ x: 10, y: 20 }, { x: 799, y: 599 }], "points"),
   );
 });
 
-test("ensureBoundsInsideCanvas rejects out-of-bounds ellipses", () => {
+test("ensurePointsInsideCanvas rejects out-of-bounds points", () => {
   assert.throws(
-    () => ensureBoundsInsideCanvas(canvas, { x: 750, y: 20, width: 100, height: 80 }),
-    /does not fit inside the Paint canvas/,
+    () => ensurePointsInsideCanvas(canvas, [{ x: 750, y: 20 }, { x: 800, y: 20 }], "points"),
+    /outside the resolved Paint canvas/,
   );
 });
 
-test("canvasBoundsToClientDrag converts canvas-relative bounds", () => {
-  const drag = canvasBoundsToClientDrag(canvas, {
-    x: 10,
-    y: 20,
-    width: 100,
-    height: 80,
-  });
-  assert.deepEqual(drag, {
-    start: { x: 110, y: 220 },
-    end: { x: 210, y: 300 },
-  });
+test("ensurePointsInsideCanvas rejects negative coordinates", () => {
+  assert.throws(
+    () => ensurePointsInsideCanvas(canvas, [{ x: -1, y: 20 }], "points"),
+    /outside the resolved Paint canvas/,
+  );
 });
 
-test("validateDurationMs enforces range", () => {
-  assert.equal(validateDurationMs(600), 600);
-  assert.throws(() => validateDurationMs(20), /between 50 and 5000/);
-  assert.throws(() => validateDurationMs(6000), /between 50 and 5000/);
+test("canvasPointsToClientPoints converts canvas-relative points", () => {
+  const points = canvasPointsToClientPoints(canvas, [{ x: 10, y: 20 }], "points");
+  assert.deepEqual(points, [{ x: 110, y: 220 }]);
+});
+
+test("canvasPointsToClientPoints applies the drawable inset", () => {
+  const insetCanvas = {
+    ...canvas,
+    drawableInset: { x: 8, y: 8 },
+  };
+  const points = canvasPointsToClientPoints(
+    insetCanvas,
+    [{ x: 0, y: 0 }, { x: 799, y: 599 }],
+    "points",
+  );
+  assert.deepEqual(points, [
+    { x: 108, y: 208 },
+    { x: 891, y: 791 },
+  ]);
 });

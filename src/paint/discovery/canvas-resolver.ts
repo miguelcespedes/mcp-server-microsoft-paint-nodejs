@@ -26,13 +26,6 @@ export interface PaintCanvas {
   drawableInset?: { x: number; y: number };
 }
 
-export interface EllipseBounds {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
 export interface ActiveCanvasDebugInfo {
   name: string;
   automationId: string;
@@ -50,54 +43,6 @@ export function parseWindowHandleHex(windowHandleHex: string): bigint {
 
 export function serializeWindowHandle(hwnd: bigint): string {
   return `0x${hwnd.toString(16).padStart(16, "0")}`;
-}
-
-export function validateDurationMs(durationMs: number): number {
-  if (!Number.isInteger(durationMs) || durationMs < 50 || durationMs > 5_000) {
-    throw new PaintMcpError(
-      "INVALID_CANVAS_BOUNDS",
-      `durationMs must be an integer between 50 and 5000 ms (received ${durationMs}).`,
-    );
-  }
-  return durationMs;
-}
-
-export function validateEllipseBounds(bounds: EllipseBounds): void {
-  const entries = Object.entries(bounds);
-  for (const [name, value] of entries) {
-    if (!Number.isInteger(value)) {
-      throw new PaintMcpError(
-        "INVALID_CANVAS_BOUNDS",
-        `${name} must be an integer (received ${value}).`,
-      );
-    }
-  }
-
-  if (bounds.x < 0 || bounds.y < 0 || bounds.width <= 0 || bounds.height <= 0) {
-    throw new PaintMcpError(
-      "INVALID_CANVAS_BOUNDS",
-      "Ellipse bounds must use non-negative coordinates and positive dimensions.",
-      bounds,
-    );
-  }
-}
-
-export function ensureBoundsInsideCanvas(
-  canvas: PaintCanvas,
-  bounds: EllipseBounds,
-): void {
-  validateEllipseBounds(bounds);
-
-  if (
-    bounds.x + bounds.width > canvas.logicalWidth ||
-    bounds.y + bounds.height > canvas.logicalHeight
-  ) {
-    throw new PaintMcpError(
-      "DRAW_BOUNDS_OUTSIDE_CANVAS",
-      "The requested ellipse does not fit inside the Paint canvas.",
-      { canvas, bounds },
-    );
-  }
 }
 
 export function ensurePointsInsideCanvas(
@@ -148,70 +93,6 @@ export function canvasPointsToClientPoints(
       inset.y +
       Math.round((point.y / canvas.logicalHeight) * drawableHeight),
   }));
-}
-
-export function canvasBoundsToClientDrag(
-  canvas: PaintCanvas,
-  bounds: EllipseBounds,
-): { start: { x: number; y: number }; end: { x: number; y: number } } {
-  ensureBoundsInsideCanvas(canvas, bounds);
-  const inset = canvas.drawableInset ?? { x: 0, y: 0 };
-  const drawableWidth = canvas.width - inset.x * 2;
-  const drawableHeight = canvas.height - inset.y * 2;
-  return {
-    start: {
-      x:
-        canvas.clientOrigin.x +
-        inset.x +
-        Math.round((bounds.x / canvas.logicalWidth) * drawableWidth),
-      y:
-        canvas.clientOrigin.y +
-        inset.y +
-        Math.round((bounds.y / canvas.logicalHeight) * drawableHeight),
-    },
-    end: {
-      x:
-        canvas.clientOrigin.x +
-        inset.x +
-        Math.round(((bounds.x + bounds.width) / canvas.logicalWidth) * drawableWidth),
-      y:
-        canvas.clientOrigin.y +
-        inset.y +
-        Math.round(((bounds.y + bounds.height) / canvas.logicalHeight) * drawableHeight),
-    },
-  };
-}
-
-export function canvasBoundsToScreenDrag(
-  canvas: PaintCanvas,
-  bounds: EllipseBounds,
-): { start: { x: number; y: number }; end: { x: number; y: number } } {
-  ensureBoundsInsideCanvas(canvas, bounds);
-  const inset = canvas.drawableInset ?? { x: 0, y: 0 };
-  const drawableWidth = canvas.width - inset.x * 2;
-  const drawableHeight = canvas.height - inset.y * 2;
-  return {
-    start: {
-      x:
-        canvas.screenOrigin.x +
-        inset.x +
-        Math.round((bounds.x / canvas.logicalWidth) * drawableWidth),
-      y:
-        canvas.screenOrigin.y +
-        inset.y +
-        Math.round((bounds.y / canvas.logicalHeight) * drawableHeight),
-    },
-    end: {
-      x:
-        canvas.screenOrigin.x +
-        inset.x +
-        Math.round(((bounds.x + bounds.width) / canvas.logicalWidth) * drawableWidth),
-      y:
-        canvas.screenOrigin.y +
-        inset.y +
-        Math.round(((bounds.y + bounds.height) / canvas.logicalHeight) * drawableHeight),
-    },
-  };
 }
 
 function parseCanvasLogicalSize(

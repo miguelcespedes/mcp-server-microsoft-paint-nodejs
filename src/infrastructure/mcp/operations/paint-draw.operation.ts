@@ -1,7 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { PaintPort } from "../../../domain/drawing.js";
-import type { PaintController } from "../../../paint/paint-controller.js";
 import {
   arcPolyline,
   circlePolyline,
@@ -17,7 +16,6 @@ import { notifyOperationFinished } from "../../win32/process.js";
 import { toolErrorResult } from "../errors.js";
 import { logToolFinished, logToolStarted } from "../tool-logging.js";
 import {
-  durationMsSchema,
   ellipseHeightSchema,
   ellipseWidthSchema,
   ellipseXSchema,
@@ -27,8 +25,7 @@ import {
   windowModeSchema,
 } from "../schemas.js";
 
-const drawModeSchema = z.enum(["freehand", "primitive", "generator"]);
-const primitiveKindSchema = z.enum(["ellipse", "polyline"]);
+const drawModeSchema = z.enum(["freehand", "generator"]);
 
 const generatorSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -160,7 +157,6 @@ function generatorToStrokes(generator: z.infer<typeof generatorSchema>) {
 export function registerPaintDraw(
   server: McpServer,
   paint: PaintPort,
-  controller: PaintController,
 ): void {
   server.registerTool(
     "paint_draw",
@@ -168,10 +164,11 @@ export function registerPaintDraw(
       title: "Dibujar en Paint",
       description:
         "Herramienta productiva principal para dibujar en Paint. Soporta dos modos: " +
-        "'freehand' para uno o más strokes libres, y 'primitive' para primitivas " +
-        "matemáticas como ellipse o polyline.",
+        "'freehand' para uno o más strokes libres, y 'generator' para el DSL de " +
+        "generadores matemáticos (ellipse, circle, disk, arc, rectangle, " +
+        "roundedRectangle, regularPolygon, starPolygon, logarithmicSpiral, polyline).",
       inputSchema: {
-        mode: drawModeSchema.default("primitive"),
+        mode: drawModeSchema.default("generator"),
         strokes: z
           .array(
             z.object({
@@ -197,30 +194,11 @@ export function registerPaintDraw(
                 { x: 320, y: 300 },
               ],
             },
-          ])
-          .optional(),
-        primitive: primitiveKindSchema.default("ellipse").optional(),
+          ]),
         generator: generatorSchema
-          .default({ kind: "ellipse", x: 100, y: 120, width: 300, height: 180, stepCount: 72 })
-          .optional(),
+          .default({ kind: "ellipse", x: 100, y: 120, width: 300, height: 180, stepCount: 72 }),
         generators: generatorListSchema.optional(),
-        points: z
-          .array(pointSchema)
-          .min(2)
-          .max(1000)
-          .default([
-            { x: 80, y: 80 },
-            { x: 420, y: 80 },
-            { x: 420, y: 360 },
-            { x: 80, y: 360 },
-          ])
-          .optional(),
-        x: ellipseXSchema,
-        y: ellipseYSchema,
-        width: ellipseWidthSchema,
-        height: ellipseHeightSchema,
         stepDelayMs: stepDelayMsSchema,
-        durationMs: durationMsSchema,
         windowMode: windowModeSchema,
       },
     },
@@ -247,77 +225,33 @@ export function registerPaintDraw(
           };
         }
 
-        if (args.mode === "generator") {
-          const generators = args.generators ?? [args.generator];
-          const allStrokes = generators.flatMap((generator) => generatorToStrokes(generator));
-          const window = await paint.createWindow();
-          const result = allStrokes.length === 1
-            ? await window.drawPolyline(allStrokes[0], {
-                stepDelayMs: args.stepDelayMs,
-              })
-            : await window.drawFreehand(
-                allStrokes.map((points) => ({ points })),
-                {
-                  stepDelayMs: args.stepDelayMs,
-                },
-              );
-          outcome = "success";
-          return {
-            content: [
-              {
-                type: "text",
-                text:
-                  `Generator drawing completed with ${generators.length} generator(s) in ` +
-                  `"${result.windowTitle}".`,
-              },
-            ],
-            structuredContent: {
-              ...result,
-              generators,
-            },
-          };
-        }
-
-        if (args.primitive === "ellipse") {
-          const result = await controller.drawEllipse(
-            {
-              x: args.x,
-              y: args.y,
-              width: args.width,
-              height: args.height,
-            },
-            args.durationMs,
-            args.windowMode,
-          );
-          outcome = "success";
-          return {
-            content: [
-              {
-                type: "text",
-                text:
-                  `Primitive ellipse drawn at (${result.bounds.x}, ${result.bounds.y}) ` +
-                  `with size ${result.bounds.width}x${result.bounds.height}.`,
-              },
-            ],
-            structuredContent: result,
-          };
-        }
-
+        const generators = args.generators ?? [args.generator];
+        const allStrokes = generators.flatMap((generator) => generatorToStrokes(generator));
         const window = await paint.createWindow();
-        const result = await window.drawPolyline(args.points, {
-          stepDelayMs: args.stepDelayMs,
-        });
+        const result = allStrokes.length === 1
+          ? await window.drawPolyline(allStrokes[0], {
+              stepDelayMs: args.stepDelayMs,
+            })
+          : await window.drawFreehand(
+              allStrokes.map((points) => ({ points })),
+              {
+                stepDelayMs: args.stepDelayMs,
+              },
+            );
         outcome = "success";
         return {
           content: [
             {
               type: "text",
               text:
-                `Primitive polyline drawn with ${result.pointCount} points in ` +
+                `Generator drawing completed with ${generators.length} generator(s) in ` +
                 `"${result.windowTitle}".`,
             },
           ],
-          structuredContent: result,
+          structuredContent: {
+            ...result,
+            generators,
+          },
         };
       } catch (error: unknown) {
         return toolErrorResult("paint_draw", error);

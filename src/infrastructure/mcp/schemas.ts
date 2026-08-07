@@ -66,33 +66,10 @@ export const inventoryFilterSchema = z
   .optional()
   .describe("Optional case-insensitive filter applied to discovered controls.");
 
-export const shapeNameSchema = z
-  .enum(["ellipse"])
-  .describe("Shape identifier to resolve in Paint. Current POC supports only 'ellipse'.");
-
 export const windowModeSchema = z
   .enum(["current", "new"])
   .default("current")
   .describe("Whether to use the current Paint window or create a new one.");
-
-export const shapeStyleMenuSchema = z
-  .enum(["outline", "fill", "size"])
-  .describe("Style dropdown to inspect: outline, fill, or size.");
-
-export const debugFilterSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .optional()
-  .describe("Optional case-insensitive filter for debug candidates.");
-
-export const debugMaxItemsSchema = z
-  .number()
-  .int()
-  .min(1)
-  .max(20)
-  .default(8)
-  .describe("Maximum number of debug items to include in the summarized output.");
 
 export const nonNegativeIntSchema = (name: string) =>
   z
@@ -123,11 +100,3 @@ export const ellipseWidthSchema = positiveIntSchema("Ellipse width")
 export const ellipseHeightSchema = positiveIntSchema("Ellipse height")
   .default(180)
   .describe("Ellipse height as a positive integer. Default: 180.");
-
-export const durationMsSchema = z
-  .number()
-  .int()
-  .min(50)
-  .max(5000)
-  .default(600)
-  .describe("Ellipse drag duration in milliseconds (50-5000). Default: 600.");

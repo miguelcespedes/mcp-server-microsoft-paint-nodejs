@@ -22,7 +22,7 @@ export function registerOperations(
   paint: PaintPort,
   controller: PaintController,
 ): void {
-  registerPaintDraw(server, paint, controller);
+  registerPaintDraw(server, paint);
   registerPaintDebugUi(server, controller);
   registerPaintDebugCanvas(server, controller);
 }
