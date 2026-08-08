@@ -62,9 +62,6 @@ const automationClient = new AutomationClient();
 /** Botón "Cubo de pintura" (Fill) en la barra de herramientas. */
 const FILL_BUTTON = { x: 368, y: 82 };
 
-/** Botón "Texto" (A) en la barra de herramientas. */
-const TEXT_BUTTON = { x: 408, y: 82 };
-
 /** Botón "Seleccionar" en la barra de herramientas. */
 const SELECT_BUTTON = { x: 248, y: 82 };
 
@@ -309,6 +306,94 @@ async function setBrushThickness(hwnd: bigint, thickness: number): Promise<void>
   const itemScreen = proc.clientToScreen(hwnd, { x: 480, y: SIZE_ITEM_Y });
   await proc.clickAt(itemScreen);
   await proc.sleep(200);
+}
+
+/**
+ * Valores preestablecidos de FontSizeComboBox (confirmado con Accessibility
+ * Insights: es una lista fija de ítems seleccionables, no un campo libre —
+ * intentar escribir un valor arbitrario en su EditableText no surtía
+ * efecto porque ese elemento está marcado invisible hasta tener foco real).
+ */
+const FONT_SIZE_PRESETS = [
+  8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72, 96, 128, 172, 256,
+];
+
+function nearestFontSizePreset(fontSize: number): number {
+  return FONT_SIZE_PRESETS.reduce((best, candidate) =>
+    Math.abs(candidate - fontSize) < Math.abs(best - fontSize) ? candidate : best,
+  );
+}
+
+/**
+ * Expande un ComboBox de la cinta por automationId y selecciona el ítem
+ * cuyo nombre coincide (mismo patrón ya probado en setBrushThickness:
+ * Invoke para expandir, ubicar el ítem por nombre, Invoke para elegirlo —
+ * más confiable que ValuePattern.SetValue o KeyTips especulativas).
+ */
+async function selectComboBoxItem(
+  hwnd: bigint,
+  comboBoxAutomationId: string,
+  matchesItem: (name: string) => boolean,
+): Promise<boolean> {
+  const windowHandleHex = `0x${hwnd.toString(16).padStart(16, "0")}`;
+  const payload = {
+    windowHandleHex,
+    maxDepth: 10,
+    includeBoundingRectangles: false,
+    scope: "window" as const,
+  };
+  try {
+    const inventory = await automationClient.inventory(payload);
+    const combo = inventory.elements.find(
+      (el: { automationId?: string }) => el.automationId === comboBoxAutomationId,
+    );
+    if (!combo?.runtimeId) {
+      return false;
+    }
+    await automationClient.invoke({ windowHandleHex, runtimeId: combo.runtimeId });
+    await proc.sleep(200);
+
+    const expanded = await automationClient.inventory(payload);
+    const item = expanded.elements.find(
+      (el: { name?: string }) => el.name !== undefined && matchesItem(el.name.trim()),
+    );
+    if (!item?.runtimeId) {
+      return false;
+    }
+    await automationClient.invoke({ windowHandleHex, runtimeId: item.runtimeId });
+    await proc.sleep(150);
+    return true;
+  } catch (error) {
+    logger.debug("selectComboBoxItem failed", {
+      comboBoxAutomationId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
+
+/**
+ * Aplica el tamaño de fuente para el texto insertado con insertText.
+ * Requiere estar DENTRO de un cuadro de texto activo (cursor parpadeando),
+ * no solo con la herramienta Texto seleccionada — el grupo "Fuente" de la
+ * cinta solo existe en ese momento. Sin esto, Paint usa el último tamaño
+ * que haya quedado activo (p. ej. 48px de una sesión anterior), que puede
+ * no caber en el cuadro calculado y hacer que el texto no se vea aunque
+ * insertText no lance ningún error. Como el ComboBox solo ofrece valores
+ * preestablecidos, se selecciona el más cercano al pedido.
+ */
+async function setFontSize(hwnd: bigint, fontSize: number): Promise<void> {
+  const target = nearestFontSizePreset(fontSize);
+  await selectComboBoxItem(hwnd, "FontSizeComboBox", (name) => name === String(target));
+}
+
+/** Aplica la familia de fuente para el texto insertado con insertText. */
+async function setFontFamily(hwnd: bigint, fontFamily: string): Promise<void> {
+  await selectComboBoxItem(
+    hwnd,
+    "FontComboBox",
+    (name) => name.toLowerCase() === fontFamily.trim().toLowerCase(),
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -913,9 +998,12 @@ async function createPaintWindow(
 
       const canvas = prepared.canvas;
 
-      // Select Text tool (A)
-      const textScreen = proc.clientToScreen(window.hwnd, TEXT_BUTTON);
-      await proc.clickAt(textScreen);
+      // Seleccionar Texto con su atajo directo ("T"), no con coordenadas
+      // fijas de la cinta: el mismo problema de fiabilidad que ya se
+      // resolvió para Lápiz/Brocha (ver ensureDrawingToolActive) — un clic
+      // en una posición fija falla si la ventana/monitor/DPI cambian, y
+      // deja typeText escribiendo en la herramienta que haya quedado activa.
+      proc.pressKey(win32.VK_T);
       await proc.sleep(300);
 
       // Create text box by dragging
@@ -935,14 +1023,25 @@ async function createPaintWindow(
       await proc.dragPolyline([screenStart, screenEnd], options.stepDelayMs);
       await proc.sleep(300);
 
+      // Aplicar tamaño/familia de fuente AHORA que hay un cuadro de texto
+      // realmente activo (cursor parpadeando): la pestaña contextual
+      // "Herramientas de texto" que la KeyTip necesita solo existe en ese
+      // momento, no apenas se selecciona la herramienta Texto. Antes de
+      // este fix, options.fontSize/fontFamily se aceptaban en la interfaz
+      // pero nunca se aplicaban — Paint dibujaba con lo que hubiera
+      // quedado activo de antes.
+      await setFontSize(window.hwnd, options.fontSize);
+      await setFontFamily(window.hwnd, options.fontFamily);
+
       // Type the text
-      // Note: This is simplified - real implementation would need to handle font formatting
       await proc.typeText(options.content);
       await proc.sleep(200);
 
-      // Click outside to commit text
-      const commitPoint = proc.clientToScreen(window.hwnd, { x: options.x - 50, y: options.y - 50 });
-      await proc.clickAt(commitPoint);
+      // Confirmar el texto con Escape en vez de un clic "afuera": un clic a
+      // -50px del cuadro puede caer en coordenadas negativas (texto cerca
+      // del borde) o sobre la cinta de herramientas si el cuadro está cerca
+      // del borde superior, disparando una acción no deseada.
+      proc.pressKey(win32.VK_ESCAPE);
       await proc.sleep(options.stepDelayMs);
 
       // P5: restaurar zoom al 100% si se hizo fit-to-window

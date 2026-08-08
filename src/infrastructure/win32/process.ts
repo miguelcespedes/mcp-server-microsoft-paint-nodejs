@@ -749,6 +749,26 @@ export async function pressKeyTip(vk: number, delayMs = 250): Promise<void> {
   sendKeyboardEvent(vk, true);
 }
 
+/**
+ * Como pressKeyTip, pero para navegar una cadena de KeyTips de varios
+ * pasos (p. ej. Alt → J → T para abrir la pestaña contextual "Herramientas
+ * de texto", seguido de F → S para saltar al cuadro de tamaño de fuente):
+ * Alt se pulsa y suelta UNA sola vez para entrar en modo KeyTip, y luego
+ * cada tecla de la secuencia se pulsa por separado — el ribbon va
+ * revelando las KeyTips del siguiente nivel a medida que se selecciona
+ * cada pestaña/grupo, sin necesidad de volver a pulsar Alt entre pasos.
+ */
+export async function pressKeyTipSequence(keys: number[], delayMs = 250): Promise<void> {
+  sendKeyboardEvent(win32.VK_MENU, false);
+  sendKeyboardEvent(win32.VK_MENU, true);
+  await sleep(delayMs);
+  for (const vk of keys) {
+    sendKeyboardEvent(vk, false);
+    sendKeyboardEvent(vk, true);
+    await sleep(delayMs);
+  }
+}
+
 /** Presiona el botón izquierdo del mouse. */
 export function mouseButtonDown(): void {
   sendMouseInput({ flags: win32.MOUSEEVENTF_LEFTDOWN });

@@ -401,7 +401,9 @@ export function registerPaintDraw3d(
 
         const generators = args.generators ?? [args.generator!];
 
-        if (generators.length > 0) {
+        // Si el llamador ya pidió un tamaño explícito de canvas, se respeta
+        // tal cual — no lo pisamos con el ajuste automático de aspecto.
+        if (!args.canvas && generators.length > 0) {
           const { allStrokes: aspectStrokes } = buildStrokesWithProvenance(
             generators,
             generator3dToStrokes,

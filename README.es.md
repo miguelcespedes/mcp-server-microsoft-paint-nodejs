@@ -71,11 +71,11 @@ scripts/
 
 ## Herramientas MCP actuales
 
-Solo hay tres herramientas registradas. La API se consolidó: una herramienta productiva de dibujo y dos de diagnóstico.
+Hay siete herramientas registradas: tres de dibujo (`paint_draw` para 2D, `paint_draw_3d` para sólidos en alambre, `paint_napkin` para primitivos de sketch estilo Dan Roam), `paint_edit` (borrar/rellenar/texto/recortar), `paint_canvas` (redimensionar) y dos de diagnóstico (`paint_debug_ui`, `paint_debug_canvas`).
 
 ### `paint_draw`
 
-La única herramienta productiva. Dos modos, todos validados con zod:
+La herramienta productiva de dibujo 2D. Dos modos, todos validados con zod:
 
 | Modo | Propósito |
 |---|---|
@@ -109,7 +109,13 @@ Parámetros comunes:
 
 `grid` repite una figura en una retícula de `cols` × `rows` centrada en la región `[x, y, width, height]` — un mosaico de puntos, una rejilla de casillas, una cuadrícula en todo el lienzo. `cols × rows` está limitado a 400. `dotsAlongPath` distribuye círculos pequeños a intervalos de `spacing` a lo largo de un sendero polilínea — los puntos de un corredor de Pac-Man o una ruta punteada; el número de círculos está limitado a 500 (sube `spacing` o acorta el sendero).
 
-**Sólidos 3D — proyección a alambre.** `src/domain/solids.ts` aporta matemática 3D pura (rotación X→Y→Z, proyección ortográfica/perspectiva) y los siguientes kinds, definidos centrados en el origen (se admiten coordenadas negativas; combínalos con `fit: "contain"`):
+**Orden de ejecución `origin`/`fit`/`canvas`**: `origin` desplaza las coordenadas del generador primero; luego (si no se pidió un `canvas` explícito) el lienzo puede auto-ajustarse a la proporción del contenido; por último `fit` (`"contain"`/`"fill"`) recalcula escala+traslación desde el bounding box del propio contenido. Con `fit: "contain"`/`"fill"`, el desplazamiento de `origin` queda entonces mayormente reabsorbido por ese auto-centrado — combínalo con `fit: "none"` si necesitás que una posición absoluta realmente se respete. Pasar un `canvas` explícito salta por completo el auto-ajuste de aspecto (tu tamaño pedido se respeta tal cual).
+
+**`verify`** (default `true`): tras dibujar, una sonda de PowerShell (`scripts/paint-screenshot.ps1`) muestrea la región dibujada en pantalla buscando píxeles no blancos y reporta `verified`/`verificationDetail` en el resultado — `success: true` por sí solo solo significa que ninguna llamada nativa lanzó excepción, no que la tinta realmente llegó al lienzo. Poné `verify: false` para saltar el costo de ~200-400ms de la captura en llamadas por lote.
+
+### `paint_draw_3d`
+
+Sólidos y mallas 3D proyectados a alambre. `src/domain/solids.ts` aporta matemática 3D pura (rotación X→Y→Z, proyección ortográfica/perspectiva) y los siguientes kinds, definidos centrados en el origen del modelo (sin parámetro `origin` — no tendría sentido para geometría que por diseño siempre está centrada en el modelo):
 
 | kind | Parámetros (valores por defecto entre paréntesis) | Resultado |
 |---|---|---|
@@ -134,6 +140,26 @@ Composición: pasa `generators: [...]` (1–100) para dibujar figuras compuestas
 5. **Arrastre** — un arrastre de mouse con `SendInput` por trazo (`dragPolyline`); el arrastre pasa por cada punto en orden.
 
 Ver la [Galería de ejemplos](#galería-de-ejemplos) más abajo con llamadas listas para usar que cubren todas las familias de generadores.
+
+### `paint_napkin`
+
+Primitivos de sketch inspirados en *The Back of the Napkin* de Dan Roam ("Tu mundo en una servilleta") — nombrada por el libro, no por el autor. Implementa la "regla 6×6" del libro: 6 preguntas mapeadas a 6 formas de mostrarlas, en `src/domain/napkin.ts` (separado a propósito de `figures.ts`, que tiene geometría de propósito general, no este vocabulario de sketch de negocio):
+
+| kind | Pregunta | Parámetros (defaults entre paréntesis) |
+|---|---|---|
+| `portrait` | Quién/qué | `x`, `y` (pies), `scale` (20, radio de cabeza), `pose` (`standing`\|`walking`\|`pointing`\|`sitting`\|`thinking`), `label` |
+| `chart` | Cuánto | `x`, `y`, `width`, `height`, `values[]`, `gap` (0.3), `labels[]` |
+| `map` | Dónde | `x`, `y`, `width`, `height`, `markers[]` (`{x,y}` relativos en `[0,1]`), `markerRadius`, `labels[]` |
+| `timeline` | Cuándo | `x`, `y`, `length`, `events`, `tickHeight` (14), `labels[]` |
+| `flow` | Cómo | `x`, `y`, `boxWidth`, `boxHeight`, `gap`, `steps`, `labels[]` |
+| `causeEffect` | Por qué | `x`, `y`, `width`, `height`, `trend` (`up`\|`down`), `xLabel`, `yLabel` |
+| `arrow` | (transversal) | `from`, `to`, `headSize` — eje + punta angulada, usado internamente por `flow` y la pose `pointing` de `portrait` |
+
+Sin parámetro `origin` — cada kind ya trae su propio `x`/`y`. Todo monigote sale del mismo esqueleto de proporciones fijas (`stickFigure` en `napkin.ts`: largos de cabeza/torso/brazos/piernas derivados de `scale`) en vez de ángulos calculados a mano en cada llamada, así que las poses salen anatómicamente consistentes.
+
+**Las etiquetas son texto real de Paint**, no trazos dibujados — el punto de Roam es que una barra o un pin de mapa sin su rótulo no comunica nada. Las anclas de las etiquetas se calculan en el mismo espacio de diseño que los trazos y se fit-transforman en la MISMA llamada a `fitStrokesToCanvas` (ambas esquinas de cada cuadro de texto, no solo su posición) para que queden alineadas y del tamaño correcto tras `fit`/auto-resize del canvas. Estilo compartido para todas las etiquetas de una llamada: `fontSize` (default 14 — se ajusta al preset fijo más cercano de la cinta de Paint: 8,9,10,11,12,14,16,18,20,22,24,26,28,36,48,...), `fontFamily` (default Arial), `labelColor` (default `#000000`).
+
+> **Limitación conocida**: la aplicación de tamaño/familia de fuente pasa por los ComboBox `FontSizeComboBox`/`FontComboBox` de la cinta de Paint (UI Automation: expandir el combo, ubicar el ítem preestablecido por nombre, invocarlo — confirmado con Accessibility Insights que son listas fijas de presets, no campos de texto libre). En pruebas manuales esta selección no se reflejó de forma confiable en el texto renderizado. El contenido del texto en sí se inserta correctamente (herramienta Texto vía su atajo `T`, cuadro arrastrado con `dragPolyline`, confirmado con `Escape` en vez de un clic de "confirmar" que podía fallar). Si las etiquetas salen con el tamaño equivocado, este es el sospechoso actual — tratá `fontSize`/`fontFamily` como best-effort hasta profundizar más en la causa raíz.
 
 ### `paint_debug_ui`
 

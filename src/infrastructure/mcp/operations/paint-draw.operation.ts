@@ -546,7 +546,8 @@ export function registerPaintDraw(
         const offsetGenerators = generators.map((g) => applyOriginToGenerator(g, origin));
 
         // P2: auto-resize canvas to match content aspect ratio when using fit
-        if (offsetGenerators.length > 0) {
+        // — pero solo si no se pidió un tamaño explícito, para no pisarlo.
+        if (!args.canvas && offsetGenerators.length > 0) {
           const { allStrokes: aspectStrokes } = buildStrokesWithProvenance(
             offsetGenerators,
             generatorToStrokes,

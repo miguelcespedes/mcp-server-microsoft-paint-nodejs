@@ -71,11 +71,11 @@ scripts/
 
 ## Current MCP Tools
 
-Only three tools are registered. The API was consolidated: one productive drawing tool plus two diagnostics.
+Seven tools are registered: three productive drawing tools (`paint_draw` for 2D, `paint_draw_3d` for wireframe solids, `paint_napkin` for Dan Roam-style sketch primitives), `paint_edit` (erase/fill/text/crop), `paint_canvas` (resize), and two diagnostics (`paint_debug_ui`, `paint_debug_canvas`).
 
 ### `paint_draw`
 
-The single productive tool. Two modes, all validated with zod:
+The 2D productive tool. Two modes, all validated with zod:
 
 | Mode | Purpose |
 |---|---|
@@ -109,7 +109,13 @@ Common parameters:
 
 `grid` repeats a figure across a `cols` × `rows` lattice centered in the region `[x, y, width, height]` — a mosaic of dots, a board of cells, a full-canvas lattice. `cols × rows` is capped at 400. `dotsAlongPath` distributes small circles at `spacing` intervals along a polyline path — the dots of a Pac-Man corridor or a dotted route; the dot count is capped at 500 (raise `spacing` or shorten the path).
 
-**3D solids — wireframe projection.** `src/domain/solids.ts` provides pure 3D math (rotation X→Y→Z, orthographic/perspective projection) and the following wireframe kinds, defined centered at the origin (negative coordinates allowed; pair them with `fit: "contain"`):
+**`origin`/`fit`/`canvas` execution order**: `origin` offsets raw generator coordinates first, then (if no explicit `canvas` was given) the canvas may auto-resize to match the content's aspect ratio, then `fit` (`"contain"`/`"fill"`) recomputes scale+translate from the content's own bounding box. With `fit: "contain"`/`"fill"`, `origin`'s translation is therefore mostly re-absorbed by that auto-centering — pair `origin` with `fit: "none"` if you need an absolute position to actually stick. Passing an explicit `canvas` skips the aspect auto-resize entirely (your requested size is respected as-is).
+
+**`verify`** (default `true`): after drawing, a PowerShell probe (`scripts/paint-screenshot.ps1`) samples the drawn screen region for non-white pixels and reports `verified`/`verificationDetail` in the result — `success: true` alone only means no native call threw, not that ink actually landed. Set `verify: false` to skip the ~200-400ms screenshot cost in batch calls.
+
+### `paint_draw_3d`
+
+3D solids and meshes, projected to wireframe strokes. `src/domain/solids.ts` provides pure 3D math (rotation X→Y→Z, orthographic/perspective projection) and the following wireframe kinds, defined centered at the model origin (no `origin` parameter — it wouldn't mean anything for geometry that's always model-centered by design):
 
 | kind | Parameters (defaults in parentheses) | Result |
 |---|---|---|
@@ -134,6 +140,26 @@ Composition: pass `generators: [...]` (1–100) to draw compound figures in one 
 5. **Drag** — one `SendInput` mouse drag per stroke (`dragPolyline`); the drag moves through every point in order.
 
 See the [Examples Gallery](#examples-gallery) below for ready-to-use calls covering every family of generators.
+
+### `paint_napkin`
+
+Sketch primitives inspired by Dan Roam's *The Back of the Napkin* ("Tu mundo en una servilleta") — named after the book, not the author. Implements the book's "6×6 rule": 6 questions mapped to 6 ways of showing them, in `src/domain/napkin.ts` (kept separate from `figures.ts`, which holds general-purpose geometry, not this business-sketch vocabulary):
+
+| kind | Question | Parameters (defaults in parentheses) |
+|---|---|---|
+| `portrait` | Who/what | `x`, `y` (feet position), `scale` (20, head radius), `pose` (`standing`\|`walking`\|`pointing`\|`sitting`\|`thinking`), `label` |
+| `chart` | How much | `x`, `y`, `width`, `height`, `values[]`, `gap` (0.3), `labels[]` |
+| `map` | Where | `x`, `y`, `width`, `height`, `markers[]` (relative `{x,y}` in `[0,1]`), `markerRadius`, `labels[]` |
+| `timeline` | When | `x`, `y`, `length`, `events`, `tickHeight` (14), `labels[]` |
+| `flow` | How | `x`, `y`, `boxWidth`, `boxHeight`, `gap`, `steps`, `labels[]` |
+| `causeEffect` | Why | `x`, `y`, `width`, `height`, `trend` (`up`\|`down`), `xLabel`, `yLabel` |
+| `arrow` | (cross-cutting) | `from`, `to`, `headSize` — shaft + angled head, used internally by `flow` and `portrait`'s `pointing` pose |
+
+No `origin` parameter — every kind already carries its own `x`/`y`. Every stick figure comes from the same fixed-proportion skeleton (`stickFigure` in `napkin.ts`: head/torso/arm/leg lengths derived from `scale`) instead of hand-computed joint angles per call, so poses stay anatomically consistent.
+
+**Labels are real Paint text**, not drawn strokes — Roam's point is that a bare chart bar or map pin doesn't communicate anything without its caption. Label anchors are computed in the same design space as the strokes and fit-transformed in the *same* `fitStrokesToCanvas` call (both corners of each text box, not just its position) so they stay aligned and correctly sized after `fit`/canvas auto-resize. Shared styling across all labels in one call: `fontSize` (default 14 — snapped to the nearest of Paint's fixed ribbon presets: 8,9,10,11,12,14,16,18,20,22,24,26,28,36,48,...), `fontFamily` (default Arial), `labelColor` (default `#000000`).
+
+> **Known limitation**: font-size/family application goes through Paint's ribbon `FontSizeComboBox`/`FontComboBox` (UI Automation: expand the combo, find the matching preset item by name, invoke it — confirmed via Accessibility Insights that these are fixed preset lists, not free-text fields). In manual testing this selection did not reliably show up in the rendered text. Text content itself does insert correctly (Text tool via its `T` shortcut, box dragged via `dragPolyline`, confirmed with `Escape` instead of a stray commit-click). If labels render with the wrong size, this is the current suspect — treat `fontSize`/`fontFamily` as best-effort until this is root-caused further.
 
 ### `paint_debug_ui`
 
