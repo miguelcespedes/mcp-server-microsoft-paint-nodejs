@@ -131,6 +131,37 @@ export type FreehandResult = {
   warning?: string;
 };
 
+/** Resultado de operación de relleno. */
+export interface FillResult {
+  success: boolean;
+  processId: number;
+  windowHandle: string;
+  windowTitle: string;
+  createdBy: WindowCreationMethod;
+  canvas: PaintCanvasInfo;
+}
+
+/** Resultado de inserción de texto. */
+export interface TextResult {
+  success: boolean;
+  processId: number;
+  windowHandle: string;
+  windowTitle: string;
+  createdBy: WindowCreationMethod;
+  canvas: PaintCanvasInfo;
+}
+
+/** Resultado de recorte. */
+export interface CropResult {
+  success: boolean;
+  processId: number;
+  windowHandle: string;
+  windowTitle: string;
+  createdBy: WindowCreationMethod;
+  canvas: PaintCanvasInfo;
+  cropRect: { x: number; y: number; width: number; height: number };
+}
+
 /**
  * VENTANA DE PAINT (analogía Ext.window.Window): una instancia representa
  * UNA ventana con su propio lienzo. El driver gestiona una única ventana:
@@ -152,6 +183,49 @@ export interface PaintWindow {
     strokes: Stroke[],
     options: DrawOptions,
   ): Promise<FreehandResult>;
+  /** Rellena (cubo de pintura) desde un punto del lienzo. */
+  fillAt(
+    x: number,
+    y: number,
+    options: FillOptions,
+  ): Promise<FillResult>;
+  /** Inserta un cuadro de texto con formato. */
+  insertText(
+    options: TextOptions,
+  ): Promise<TextResult>;
+  /** Recorta la imagen a un rectángulo. */
+  crop(
+    options: CropOptions,
+  ): Promise<CropResult>;
+}
+
+/** Opciones para relleno (cubo de pintura). */
+export interface FillOptions {
+  stepDelayMs: number;
+}
+
+/** Opciones para inserción de texto. */
+export interface TextOptions {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  content: string;
+  fontSize: number;
+  fontFamily: string;
+  bold: boolean;
+  italic: boolean;
+  color: string;
+  stepDelayMs: number;
+}
+
+/** Opciones para recorte. */
+export interface CropOptions {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  stepDelayMs: number;
 }
 
 /**

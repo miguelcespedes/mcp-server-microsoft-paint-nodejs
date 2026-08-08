@@ -166,6 +166,9 @@ export const VK_ESCAPE = 0x1b;
 export const VK_E = 0x45;
 export const VK_P = 0x50;
 export const VK_0 = 0x30;
+export const VK_SPACE = 0x20;
+export const VK_TAB = 0x09;
+export const VK_BACK = 0x08;
 
 /** Índices de GetSystemMetrics para el escritorio virtual (multi-monitor). */
 export const SM_CXSCREEN = 0;

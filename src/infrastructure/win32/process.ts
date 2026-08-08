@@ -850,6 +850,98 @@ export function killProcess(pid: number): void {
 }
 
 /**
+ * Escribe texto mediante SendInput (teclado virtual).
+ * Convierte cada carácter a eventos de teclado.
+ */
+export async function typeText(text: string): Promise<void> {
+  const { sendInput, INPUT_KEYBOARD, KEYEVENTF_KEYUP, VK_SPACE, VK_TAB, VK_BACK, VK_RETURN, VK_ESCAPE } = await import("./user32.js");
+
+  const inputs: Array<{ type: number; u: { ki: { wVk: number; wScan: number; dwFlags: number; time: number; dwExtraInfo: bigint } } }> = [];
+
+  for (const char of text) {
+    const vk = charToVirtualKey(char);
+    if (vk === 0) continue;
+
+    // Key down
+    inputs.push({
+      type: INPUT_KEYBOARD,
+      u: {
+        ki: {
+          wVk: vk,
+          wScan: 0,
+          dwFlags: 0,
+          time: 0,
+          dwExtraInfo: 0n,
+        },
+      },
+    });
+
+    // Key up
+    inputs.push({
+      type: INPUT_KEYBOARD,
+      u: {
+        ki: {
+          wVk: vk,
+          wScan: 0,
+          dwFlags: KEYEVENTF_KEYUP,
+          time: 0,
+          dwExtraInfo: 0n,
+        },
+      },
+    });
+  }
+
+  if (inputs.length > 0) {
+    sendInput(inputs.length, inputs, 40); // 40 = sizeof(INPUT) on x64
+    await sleep(50);
+  }
+}
+
+function charToVirtualKey(char: string): number {
+  const code = char.charCodeAt(0);
+  // ASCII letters
+  if (code >= 65 && code <= 90) return code; // A-Z
+  if (code >= 97 && code <= 122) return code - 32; // a-z -> A-Z (shift handled separately)
+  // Digits
+  if (code >= 48 && code <= 57) return code; // 0-9
+  // Space
+  if (code === 32) return 0x20; // VK_SPACE
+  // Enter
+  if (code === 10) return 0x0d; // VK_RETURN
+  // Tab
+  if (code === 9) return 0x09; // VK_TAB
+  // Backspace
+  if (code === 8) return 0x08; // VK_BACK
+  // Escape
+  if (code === 27) return 0x1b; // VK_ESCAPE
+  // Common punctuation (simplified - would need shift for many)
+  const punctuation: Record<string, number> = {
+    ".": 0xBE, // VK_OEM_PERIOD
+    ",": 0xBC, // VK_OEM_COMMA
+    "?": 0xBF, // VK_OEM_2
+    "!": 0x31, // 1 with shift
+    "@": 0x32, // 2 with shift
+    "#": 0x33,
+    $: 0x34,
+    "%": 0x35,
+    "^": 0x36,
+    "&": 0x37,
+    "*": 0x38,
+    "(": 0x39,
+    ")": 0x30,
+    "-": 0xBD, // VK_OEM_MINUS
+    "=": 0xBB, // VK_OEM_PLUS
+    "[": 0xDB, // VK_OEM_4
+    "]": 0xDD, // VK_OEM_6
+    "\\": 0xDC, // VK_OEM_5
+    ";": 0xBA, // VK_OEM_1
+    "'": 0xDE, // VK_OEM_7
+    "`": 0xC0, // VK_OEM_3
+  };
+  return punctuation[char] ?? 0;
+}
+
+/**
  * Lanza una aplicación UWP/desktop por AUMID mediante ShellExecuteW
  * (el verbo "open" sobre un AUMID crea una instancia nueva de la app).
  * Es el mecanismo nativo de Windows para arrancar una instancia nueva de

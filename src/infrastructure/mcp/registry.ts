@@ -17,6 +17,7 @@ import { registerPaintCanvas } from "./operations/paint-canvas.operation.js";
 import { registerPaintDebugCanvas } from "./operations/paint-debug-canvas.operation.js";
 import { registerPaintDebugUi } from "./operations/paint-debug-ui.operation.js";
 import { registerPaintDraw } from "./operations/paint-draw.operation.js";
+import { registerPaintEdit } from "./operations/paint-edit.operation.js";
 
 export function registerOperations(
   server: McpServer,
@@ -24,6 +25,7 @@ export function registerOperations(
   controller: PaintController,
 ): void {
   registerPaintDraw(server, paint, controller);
+  registerPaintEdit(server, paint, controller);
   registerPaintCanvas(server, paint, controller);
   registerPaintDebugUi(server, controller);
   registerPaintDebugCanvas(server, controller);

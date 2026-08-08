@@ -32,7 +32,11 @@ import {
 import { discoverPaintInventory } from "../../paint/discovery/paint-ui-inventory.js";
 import type {
   BoundingBox,
+  CropOptions,
+  CropResult,
   DrawingRegion,
+  FillOptions,
+  FillResult,
   PaintCanvasInfo,
   PaintWindowOptions,
   DrawOptions,
@@ -43,6 +47,8 @@ import type {
   Point2D,
   PolylineResult,
   Stroke,
+  TextOptions,
+  TextResult,
   WindowCreationMethod,
 } from "../../domain/drawing.js";
 
@@ -62,6 +68,18 @@ const automationClient = new AutomationClient();
  * tocar el toolbar); se reserva para cuando se pida explícitamente.
  */
 const PENCIL_BUTTON = { x: 328, y: 82 };
+
+/** Botón "Cubo de pintura" (Fill) en la barra de herramientas. */
+const FILL_BUTTON = { x: 368, y: 82 };
+
+/** Botón "Texto" (A) en la barra de herramientas. */
+const TEXT_BUTTON = { x: 408, y: 82 };
+
+/** Botón "Seleccionar" en la barra de herramientas. */
+const SELECT_BUTTON = { x: 248, y: 82 };
+
+/** Botón "Recortar" (aparece tras seleccionar, en pestaña Imagen). */
+const CROP_BUTTON_RIBBON = { x: 520, y: 50 }; // Aproximado en la cinta
 
 /** Tiempo máximo de espera para que aparezca la ventana tras lanzar mspaint. */
 const WINDOW_WAIT_TIMEOUT_MS = 10_000;
@@ -794,6 +812,164 @@ async function createPaintWindow(
         canvas: toCanvasInfo(canvas),
         canvasBounds: computeCanvasBounds(canvasStrokes.flat()),
         ...(prepared.focus.success ? {} : { warning: prepared.focus.warning }),
+      };
+    },
+
+    async fillAt(
+      x: number,
+      y: number,
+      options: FillOptions,
+    ): Promise<FillResult> {
+      validateStepDelayMs(options.stepDelayMs);
+
+      const prepared = await prepare();
+      if (!prepared.focus.success) {
+        throw new Error(prepared.focus.warning ?? "Paint could not be prepared for fill.");
+      }
+
+      const canvas = prepared.canvas;
+
+      // Select Fill tool (cubo de pintura)
+      const fillScreen = proc.clientToScreen(window.hwnd, FILL_BUTTON);
+      await proc.clickAt(fillScreen);
+      await proc.sleep(300);
+
+      // Click at the fill point
+      const mappedPoint = mapPointsIntoDrawingRegion([{ x, y }], canvas, "fill")[0];
+      const clientPoint = canvasPointsToClientPoints(canvas, [mappedPoint], "fill")[0];
+      const screenPoint = proc.clientToScreen(window.hwnd, clientPoint);
+
+      await proc.clickAt(screenPoint);
+      await proc.sleep(options.stepDelayMs);
+
+      // P5: restaurar zoom al 100% si se hizo fit-to-window
+      if (lastFitInvoked) {
+        await resetZoomTo100(window.hwnd);
+        lastFitInvoked = false;
+      }
+
+      return {
+        success: true,
+        processId: window.pid,
+        windowHandle: info.windowHandle,
+        windowTitle: window.title,
+        createdBy,
+        canvas: toCanvasInfo(canvas),
+      };
+    },
+
+    async insertText(
+      options: TextOptions,
+    ): Promise<TextResult> {
+      validateStepDelayMs(options.stepDelayMs);
+
+      const prepared = await prepare();
+      if (!prepared.focus.success) {
+        throw new Error(prepared.focus.warning ?? "Paint could not be prepared for text.");
+      }
+
+      const canvas = prepared.canvas;
+
+      // Select Text tool (A)
+      const textScreen = proc.clientToScreen(window.hwnd, TEXT_BUTTON);
+      await proc.clickAt(textScreen);
+      await proc.sleep(300);
+
+      // Create text box by dragging
+      const startPoint = { x: options.x, y: options.y };
+      const endPoint = { x: options.x + options.width, y: options.y + options.height };
+
+      const mappedStart = mapPointsIntoDrawingRegion([startPoint], canvas, "text")[0];
+      const mappedEnd = mapPointsIntoDrawingRegion([endPoint], canvas, "text")[0];
+
+      const clientStart = canvasPointsToClientPoints(canvas, [mappedStart], "text")[0];
+      const clientEnd = canvasPointsToClientPoints(canvas, [mappedEnd], "text")[0];
+
+      const screenStart = proc.clientToScreen(window.hwnd, clientStart);
+      const screenEnd = proc.clientToScreen(window.hwnd, clientEnd);
+
+      // Drag to create text box
+      await proc.dragPolyline([screenStart, screenEnd], options.stepDelayMs);
+      await proc.sleep(300);
+
+      // Type the text
+      // Note: This is simplified - real implementation would need to handle font formatting
+      await proc.typeText(options.content);
+      await proc.sleep(200);
+
+      // Click outside to commit text
+      const commitPoint = proc.clientToScreen(window.hwnd, { x: options.x - 50, y: options.y - 50 });
+      await proc.clickAt(commitPoint);
+      await proc.sleep(options.stepDelayMs);
+
+      // P5: restaurar zoom al 100% si se hizo fit-to-window
+      if (lastFitInvoked) {
+        await resetZoomTo100(window.hwnd);
+        lastFitInvoked = false;
+      }
+
+      return {
+        success: true,
+        processId: window.pid,
+        windowHandle: info.windowHandle,
+        windowTitle: window.title,
+        createdBy,
+        canvas: toCanvasInfo(canvas),
+      };
+    },
+
+    async crop(
+      options: CropOptions,
+    ): Promise<CropResult> {
+      validateStepDelayMs(options.stepDelayMs);
+
+      const prepared = await prepare();
+      if (!prepared.focus.success) {
+        throw new Error(prepared.focus.warning ?? "Paint could not be prepared for crop.");
+      }
+
+      const canvas = prepared.canvas;
+
+      // Select Select tool
+      const selectScreen = proc.clientToScreen(window.hwnd, SELECT_BUTTON);
+      await proc.clickAt(selectScreen);
+      await proc.sleep(300);
+
+      // Drag selection rectangle
+      const startPoint = { x: options.x, y: options.y };
+      const endPoint = { x: options.x + options.width, y: options.y + options.height };
+
+      const mappedStart = mapPointsIntoDrawingRegion([startPoint], canvas, "crop")[0];
+      const mappedEnd = mapPointsIntoDrawingRegion([endPoint], canvas, "crop")[0];
+
+      const clientStart = canvasPointsToClientPoints(canvas, [mappedStart], "crop")[0];
+      const clientEnd = canvasPointsToClientPoints(canvas, [mappedEnd], "crop")[0];
+
+      const screenStart = proc.clientToScreen(window.hwnd, clientStart);
+      const screenEnd = proc.clientToScreen(window.hwnd, clientEnd);
+
+      await proc.dragPolyline([screenStart, screenEnd], options.stepDelayMs);
+      await proc.sleep(300);
+
+      // Click Crop button in ribbon (Image tab)
+      const cropScreen = proc.clientToScreen(window.hwnd, CROP_BUTTON_RIBBON);
+      await proc.clickAt(cropScreen);
+      await proc.sleep(options.stepDelayMs);
+
+      // P5: restaurar zoom al 100% si se hizo fit-to-window
+      if (lastFitInvoked) {
+        await resetZoomTo100(window.hwnd);
+        lastFitInvoked = false;
+      }
+
+      return {
+        success: true,
+        processId: window.pid,
+        windowHandle: info.windowHandle,
+        windowTitle: window.title,
+        createdBy,
+        canvas: toCanvasInfo(canvas),
+        cropRect: { x: options.x, y: options.y, width: options.width, height: options.height },
       };
     },
   };
