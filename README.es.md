@@ -1,183 +1,223 @@
-# Servidor MCP para dibujar en Microsoft Paint desde Node.js
+# MCP Server para Microsoft Paint
 
-[English](README.md) | [Español](README.es.md)
+[English](README.md) · [Español](README.es.md)
 
-Un servidor MCP en Node.js + TypeScript que controla Microsoft Paint en Windows mediante un pipeline semántico: descubrimiento con UI Automation (sin coordenadas fijas del toolbar), un resolver de lienzo robusto y un **DSL de generadores matemáticos** que dibuja figuras con arrastres de mouse — sin depender de las herramientas de forma nativas.
+## ¿Y si Paint pudiera ser algo más que Paint?
 
-## Arquitectura
+Microsoft Paint probablemente sea una de las aplicaciones menos intimidantes que haya venido incluida con Windows.
+
+Un lienzo en blanco.
+Un lápiz.
+Algunas formas.
+Una paleta de colores.
+
+Para millones de personas, quizá fue uno de los primeros lugares donde una computadora dejó de ser solamente algo que se utilizaba y se convirtió en algo con lo que se podía experimentar.
+
+Esa simplicidad despertó mi curiosidad.
+
+No porque Paint necesitara automatización.
+
+Sino porque quería entender una pregunta más interesante:
+
+**¿Hasta dónde puede llegar una herramienta ordinaria cuando una IA dispone de una forma significativa de comprenderla e interactuar con ella?**
+
+Esa pregunta terminó convirtiéndose en este proyecto.
+
+---
+
+## Comenzó como un pequeño experimento
+
+La manera más evidente de automatizar Paint habría sido mover el mouse hacia coordenadas conocidas y hacer clic en determinados botones.
+
+Eso funciona.
+
+Pero no comprende nada.
+
+Cambias la posición de la ventana, la escala de pantalla, la distribución de la interfaz o el entorno, y rápidamente queda expuesta la verdadera naturaleza de ese tipo de automatización: un script repitiendo gestos.
+
+Quería abordar el problema de otra manera.
+
+Antes de enseñarle a una IA a dibujar con Paint, quería comprender Paint.
+
+Sus ventanas.
+
+Sus controles.
+
+Su lienzo.
+
+Sus sistemas de coordenadas.
+
+Su árbol de accesibilidad.
+
+Su comportamiento.
+
+Así que el experimento primero descendió hacia las capas inferiores antes de construir hacia arriba.
+
+En lugar de preguntar:
+
+> ¿Cómo puede una IA hacer clic en Paint?
+
+empecé a preguntarme:
+
+> ¿Qué expone Paint sobre sí mismo que otro software realmente pueda comprender?
+
+Eso me llevó a Windows UI Automation, a inspeccionar el árbol de accesibilidad de Paint, descubrir el lienzo, administrar el ciclo de vida de la ventana, transformar coordenadas, utilizar APIs Win32 y finalmente construir una interfaz semántica entre una IA y la aplicación.
+
+La curiosidad se convirtió en investigación.
+
+La investigación se convirtió en estructura.
+
+Y la estructura terminó convirtiéndose en un servidor MCP.
+
+---
+
+## Paint se convirtió en el renderer, no en la idea
+
+Una vez que existía una capa confiable de interacción apareció otra pregunta.
+
+Si la IA ya no necesitaba pensar principalmente en coordenadas del mouse, ¿en qué debería pensar?
+
+La respuesta no era:
 
 ```text
-LLM / MCP Client
-        │
-        ▼
-MCP Server
-        │
-        ▼
-PaintController (orquestación)
-        │
-        ├── PaintSessionStore  → ciclo de vida de la ventana (abrir, restaurar, maximizar, foreground)
-        ├── Paint UI Inventory → árbol UIA vía puente PowerShell
-        └── Canvas Resolver    → lienzo semántico + tamaño lógico + mapeo de coordenadas
-        │
-        ▼
-Adaptador PaintPort (Win32 + arrastres de mouse con SendInput)
-        │
-        ▼
+mover el puntero a x=412, y=287
+presionar el botón del mouse
+mover el puntero a x=650, y=410
+soltar
+```
+
+Era algo más parecido a:
+
+```json
+{
+  "kind": "circle",
+  "cx": 300,
+  "cy": 220,
+  "radius": 120
+}
+```
+
+O incluso:
+
+```json
+{
+  "solid": "tesseract",
+  "size": 110,
+  "projection": "perspective"
+}
+```
+
+Esa diferencia cambió el proyecto.
+
+Paint dejó de ser la abstracción.
+
+Se convirtió en la superficie de renderizado debajo de un lenguaje visual emergente.
+
+El servidor MCP transforma descripciones semánticas y matemáticas en geometría, la geometría en coordenadas lógicas del lienzo y esas coordenadas en interacción real con Microsoft Paint.
+
+```text
+Idea
+  ↓
+Descripción semántica
+  ↓
+Geometría
+  ↓
+Coordenadas del lienzo
+  ↓
+Interacción con Windows
+  ↓
 Microsoft Paint
 ```
 
-Capas (patrón hexagonal):
+Esa es, para mí, una de las partes más interesantes del experimento.
 
-```text
-src/
-  server.ts                        raíz de composición (adapta + registra operaciones MCP)
+---
 
-  domain/                          puro, sin dependencias
-    drawing.ts                     tipos, contrato PaintPort, PaintWindow
-    figures.ts                     generadores matemáticos 2D + helpers de composición
-    solids.ts                      sólidos 3D en alambre (proyección, poliedros, toro, tesseract)
+## De círculos a un teseracto
 
-  paint/
-    paint-controller.ts            orquestación de cada operación
-    session/paint-session.ts       PaintSessionStore (ensureReady)
-    discovery/
-      paint-ui-inventory.ts        descubrimiento del árbol UIA + resumen de grupos
-      canvas-resolver.ts           resolución del lienzo + mapeo de coordenadas
-    tools/
-      paint-inventory-tool.ts
+La capa de dibujo evolucionó gradualmente hasta convertirse en un pequeño DSL matemático.
 
-  infrastructure/
-    logging/logger.ts
-    errors/paint-mcp-error.ts      PaintMcpError + códigos de error
-    windows/
-      automation/                  cliente de automatización, elemento, tipos
-      process/window-locator.ts
-    win32/
-      user32.ts  shell.ts  process.ts  paint.ts (adaptador PaintPort)
-    mcp/
-      registry.ts                  solo se registran 3 tools
-      schemas.ts                   esquemas zod de entrada (el contrato del DSL)
-      errors.ts  tool-logging.ts  debug-text.ts
-      operations/
-        paint-draw.operation.ts          → paint_draw
-        paint-debug-ui.operation.ts      → paint_debug_ui
-        paint-debug-canvas.operation.ts  → paint_debug_canvas
-        (el resto de *.operation.ts existe en disco pero NO está registrado)
+Actualmente puede expresar elementos como:
 
-  test/unit/                       tests unitarios puros (sin Paint real)
-scripts/
-  paint-uia.ps1                    puente PowerShell de UI Automation
-```
+* círculos, elipses y arcos;
+* rectángulos y rectángulos redondeados;
+* polígonos regulares y estrellados;
+* espirales logarítmicas;
+* cuadrículas y estructuras repetitivas;
+* polilíneas arbitrarias;
+* sólidos platónicos;
+* toros y nudos toroidales;
+* superficies de revolución;
+* mallas wireframe personalizadas;
+* e incluso un teseracto proyectado de 4D → 3D → 2D.
 
-## Herramientas MCP actuales
+Estas figuras no se crean utilizando los botones nativos de formas de Paint.
 
-Hay siete herramientas registradas: tres de dibujo (`paint_draw` para 2D, `paint_draw_3d` para sólidos en alambre, `paint_napkin` para primitivos de sketch estilo Dan Roam), `paint_edit` (borrar/rellenar/texto/recortar), `paint_canvas` (redimensionar) y dos de diagnóstico (`paint_debug_ui`, `paint_debug_canvas`).
+Se generan matemáticamente como puntos y trazos que después se dibujan físicamente sobre el lienzo.
 
-### `paint_draw`
+Esa restricción es deliberada.
 
-La herramienta productiva de dibujo 2D. Dos modos, todos validados con zod:
+Mantiene el experimento concentrado en la frontera entre la **descripción abstracta** y la **interacción real con una aplicación**.
 
-| Modo | Propósito |
-|---|---|
-| `freehand` | Uno o más trazos libres, cada uno dibujado con un único arrastre de mouse |
-| `generator` | El DSL: uno o más generadores matemáticos renderizados como arrastres |
+---
 
-Parámetros comunes:
+## ¿Por qué hacer esto con Paint?
 
-- `tool`: `"brush"` (por defecto, la herramienta activa de Paint) o `"pencil"` (selecciona el Lápiz en la barra de herramientas antes de dibujar — trazo fino, ideal para contornos y órbitas).
-- `fit`: `"none"` (por defecto, las coordenadas se usan tal cual), `"contain"` (escala y centra el dibujo dentro del lienzo preservando la proporción) o `"fill"` (lo estira para ocupar el lienzo). Se mantiene un margen del 5%. Con `fit` puedes diseñar en tu propio espacio de coordenadas sin conocer el tamaño del lienzo — el servidor lo conoce tras resolver la ventana.
-- `stepDelayMs`: retraso entre movimientos del mouse, 0–200 ms, por defecto 10.
+Porque Paint es deliberadamente ordinario.
 
-**Todo resultado** (`structuredContent`) incluye la geometría del `canvas` resuelto (`logicalWidth`/`logicalHeight`, orígenes, inset) y `canvasBounds`, la caja envolvente de lo que realmente se dibujó en coordenadas de lienzo — así el agente puede autoverificar sin otra llamada de debug.
+Si este experimento hubiera comenzado con Blender, AutoCAD, Mathematica u otro entorno visual sofisticado, buena parte de la capacidad podría atribuirse a la propia aplicación.
 
-**Modo `generator` — el DSL.** Un generador es una unión discriminada por `kind`. Todas las coordenadas son relativas al lienzo (ver Resolver del lienzo abajo).
+Paint nos entrega muy poco.
 
-| kind | Parámetros (valores por defecto entre paréntesis) | Resultado |
-|---|---|---|
-| `ellipse` | `x`, `y`, `width`, `height`, `stepCount` (72) | polilínea cerrada |
-| `circle` | `cx`, `cy`, `radius`, `stepCount` (72) | polilínea cerrada |
-| `disk` | `cx`, `cy`, `radius`, `rowStep` (4) | varios trazos (aspecto relleno) |
-| `arc` | `cx`, `cy`, `radius`, `startDeg`, `endDeg`, `stepDeg` (4) | polilínea abierta |
-| `rectangle` | `x`, `y`, `width`, `height` | polilínea cerrada |
-| `roundedRectangle` | `x`, `y`, `width`, `height`, `radius` (24), `stepDeg` (12) | polilínea cerrada |
-| `polyline` | `points[]` (2–1000 de `{x, y}`) | polilínea |
-| `logarithmicSpiral` | `cx`, `cy`, `growth` (1.1), `turns` (6), `angleStep` (0.05), `scale` (7) | polilínea |
-| `regularPolygon` | `cx`, `cy`, `radius`, `sides` (3–64), `rotationDeg` (-90) | polilínea cerrada |
-| `starPolygon` | `cx`, `cy`, `outerRadius`, `innerRadius`, `points` (3–32), `rotationDeg` (-90) | polilínea cerrada |
-| `grid` | `x` (0), `y` (0), `width`, `height`, `cols`, `rows`, `shape` (`circle`\|`disk`\|`rectangle`\|`ellipse`), `radius` (4), `itemWidth` (20), `itemHeight` (20), `stepCount` (24) | un stroke por ítem (mosaico, rejilla de tablero) |
-| `dotsAlongPath` | `path[]` (2–1000 de `{x, y}`), `radius` (3), `spacing` (16), `stepCount` (24) | un círculo pequeño por stroke, espaciados a lo largo del sendero |
+Y precisamente por eso resulta interesante.
 
-`grid` repite una figura en una retícula de `cols` × `rows` centrada en la región `[x, y, width, height]` — un mosaico de puntos, una rejilla de casillas, una cuadrícula en todo el lienzo. `cols × rows` está limitado a 400. `dotsAlongPath` distribuye círculos pequeños a intervalos de `spacing` a lo largo de un sendero polilínea — los puntos de un corredor de Pac-Man o una ruta punteada; el número de círculos está limitado a 500 (sube `spacing` o acorta el sendero).
+Obliga a que la inteligencia y la abstracción existan en otra capa.
 
-**Orden de ejecución `origin`/`fit`/`canvas`**: `origin` desplaza las coordenadas del generador primero; luego (si no se pidió un `canvas` explícito) el lienzo puede auto-ajustarse a la proporción del contenido; por último `fit` (`"contain"`/`"fill"`) recalcula escala+traslación desde el bounding box del propio contenido. Con `fit: "contain"`/`"fill"`, el desplazamiento de `origin` queda entonces mayormente reabsorbido por ese auto-centrado — combínalo con `fit: "none"` si necesitás que una posición absoluta realmente se respete. Pasar un `canvas` explícito salta por completo el auto-ajuste de aspecto (tu tamaño pedido se respeta tal cual).
+El resultado es un sandbox visual sorprendentemente flexible.
 
-**`verify`** (default `true`): tras dibujar, una sonda de PowerShell (`scripts/paint-screenshot.ps1`) muestrea la región dibujada en pantalla buscando píxeles no blancos y reporta `verified`/`verificationDetail` en el resultado — `success: true` por sí solo solo significa que ninguna llamada nativa lanzó excepción, no que la tinta realmente llegó al lienzo. Poné `verify: false` para saltar el costo de ~200-400ms de la captura en llamadas por lote.
+Una IA puede utilizar el mismo lienzo primitivo para explicar:
 
-### `paint_draw_3d`
+**Geometría**
 
-Sólidos y mallas 3D proyectados a alambre. `src/domain/solids.ts` aporta matemática 3D pura (rotación X→Y→Z, proyección ortográfica/perspectiva) y los siguientes kinds, definidos centrados en el origen del modelo (sin parámetro `origin` — no tendría sentido para geometría que por diseño siempre está centrada en el modelo):
+Construir polígonos, transformaciones, proyecciones y relaciones geométricas.
 
-| kind | Parámetros (valores por defecto entre paréntesis) | Resultado |
-|---|---|---|
-| `solid` | `solid` (`tetrahedron`\|`cube`\|`octahedron`\|`dodecahedron`\|`icosahedron`\|`greatIcosahedron`\|`starOctangula`\|`tesseract`), `size` (120), `rotX` (-20), `rotY` (25), `rotZ` (0), `projection` (`ortho`\|`perspective`), `perspectiveDistance` (3), `starFaces` (false) | un stroke de 2 puntos por arista (tesseract = 4D→3D→2D, 32 aristas) |
-| `torus` | `majorRadius` (100), `tubeRadius` (35), `segments` (16), `rings` (8), rotación/proyección | anillos de latitud + meridianos, un stroke cada uno |
-| `torusKnot` | `p` (2), `q` (3), `radius` (100), `tubeRadius` (30), `steps` (400), rotación/proyección | un stroke, curva 3D cerrada sobre un toro |
-| `revolution` | `profile[]` (2–100 de `{x = radio, y = altura}`), `segments` (16), rotación/proyección | anillos + meridianos de una superficie de revolución (jarrón, hiperboloide) |
-| `wireframe` | `vertices[]` (1–256 de `{x, y, z}`), `edges[]` (1–500 pares de índices), `size` (120), rotación/proyección | un stroke de 2 puntos por arista explícita (mallas low-poly) |
+**Matemáticas**
 
-`greatIcosahedron` comparte el esqueleto exacto del icosaedro (12 vértices / 30 aristas); `starFaces: true` añade sus 20 caras estrelladas que se cruzan (aproximación visual). La lista de `solid` cubre los sólidos platónicos más el poliedro estrellado de Kepler-Poinsot y el compuesto de la estrella octángula; `tesseract` proyecta 4D→3D con perspectiva (cámara a 2.5 en el eje w) y luego 3D→2D. Cada arista es un stroke de 2 puntos, muy por debajo del límite de 500 (dodecaedro: 30, tesseract: 32, toro 16×8: 24).
+Convertir estructuras matemáticas en objetos visibles.
 
-Composición: pasa `generators: [...]` (1–100) para dibujar figuras compuestas en una sola llamada — p. ej. una rosa de los vientos = `starPolygon` + `circle` + `arc` alrededor de un centro común. Un solo generador se dibuja con un arrastre; varios generadores se dibujan con un arrastre cada uno (`disk`, `grid` y `dotsAlongPath` se expanden a varios trazos). La salida repite `generators` junto con el resultado del dibujo (info de la ventana, `pointCount`/`strokeCount`/`totalPoints`, `startScreen`, `endScreen`, `canvas`, `canvasBounds`).
+**Razonamiento espacial**
 
-**Espacio de diseño + helpers de composición.** `src/domain/figures.ts` también exporta transformaciones puras — `translatePoints`, `scalePoints`, `rotatePoints`, `placePoints(angleDeg, radius, center)`, `boundingBox`, `fitStrokes` — para definir escenas en el origen y componerlas (p. ej. planetas colocados sobre órbitas) sin calcular coordenadas absolutas a mano.
+Explorar objetos tridimensionales mediante proyecciones bidimensionales.
 
-**Cómo funciona el DSL** — el pipeline completo:
+**Diagramas**
 
-1. **Validación** — el JSON se valida con zod como unión discriminada por `kind`; aquí se aplican defaults y límites, así que una entrada inválida nunca llega al lienzo.
-2. **Puntos** — cada `kind` mapea a una función matemática pura de `src/domain/figures.ts` o `src/domain/solids.ts` (sin efectos secundarios) que devuelve `Point2D[]` en coordenadas lógicas de lienzo: las curvas se aproximan con N puntos (`stepCount`/`stepDeg`), las formas cerradas repiten el primer punto, `disk` se expande a una fila de trazos para un aspecto relleno, `grid`/`dotsAlongPath` emiten un stroke por ítem, y los kinds 3D emiten un stroke de 2 puntos por arista (o por anillo/meridiano).
-3. **Chequeo del lienzo** — cada punto debe caer dentro de los límites lógicos del lienzo (`DRAW_BOUNDS_OUTSIDE_CANVAS`).
-4. **Mapeo** — puntos lógicos → área dibujable (menos el inset de 8 px) → píxeles de cliente → píxeles de pantalla.
-5. **Arrastre** — un arrastre de mouse con `SendInput` por trazo (`dragPolyline`); el arrastre pasa por cada punto en orden.
+Expresar flujos, relaciones, líneas de tiempo, mapas y modelos conceptuales sencillos.
 
-Ver la [Galería de ejemplos](#galería-de-ejemplos) más abajo con llamadas listas para usar que cubren todas las familias de generadores.
+**Educación**
 
-### `paint_napkin`
+Construir explicaciones visuales paso a paso utilizando una de las aplicaciones más simples disponibles en Windows.
 
-Primitivos de sketch inspirados en *The Back of the Napkin* de Dan Roam ("Tu mundo en una servilleta") — nombrada por el libro, no por el autor. Implementa la "regla 6×6" del libro: 6 preguntas mapeadas a 6 formas de mostrarlas, en `src/domain/napkin.ts` (separado a propósito de `figures.ts`, que tiene geometría de propósito general, no este vocabulario de sketch de negocio):
+Por eso la pregunta interesante ya no es:
 
-| kind | Pregunta | Parámetros (defaults entre paréntesis) |
-|---|---|---|
-| `portrait` | Quién/qué | `x`, `y` (pies), `scale` (20, radio de cabeza), `pose` (`standing`\|`walking`\|`pointing`\|`sitting`\|`thinking`), `label` |
-| `chart` | Cuánto | `x`, `y`, `width`, `height`, `values[]`, `gap` (0.3), `labels[]` |
-| `map` | Dónde | `x`, `y`, `width`, `height`, `markers[]` (`{x,y}` relativos en `[0,1]`), `markerRadius`, `labels[]` |
-| `timeline` | Cuándo | `x`, `y`, `length`, `events`, `tickHeight` (14), `labels[]` |
-| `flow` | Cómo | `x`, `y`, `boxWidth`, `boxHeight`, `gap`, `steps`, `labels[]` |
-| `causeEffect` | Por qué | `x`, `y`, `width`, `height`, `trend` (`up`\|`down`), `xLabel`, `yLabel` |
-| `arrow` | (transversal) | `from`, `to`, `headSize` — eje + punta angulada, usado internamente por `flow` y la pose `pointing` de `portrait` |
+> ¿Puede una IA dibujar en Paint?
 
-Sin parámetro `origin` — cada kind ya trae su propio `x`/`y`. Todo monigote sale del mismo esqueleto de proporciones fijas (`stickFigure` en `napkin.ts`: largos de cabeza/torso/brazos/piernas derivados de `scale`) en vez de ángulos calculados a mano en cada llamada, así que las poses salen anatómicamente consistentes.
+Claramente puede hacerlo.
 
-**Las etiquetas son texto real de Paint**, no trazos dibujados — el punto de Roam es que una barra o un pin de mapa sin su rótulo no comunica nada. Las anclas de las etiquetas se calculan en el mismo espacio de diseño que los trazos y se fit-transforman en la MISMA llamada a `fitStrokesToCanvas` (ambas esquinas de cada cuadro de texto, no solo su posición) para que queden alineadas y del tamaño correcto tras `fit`/auto-resize del canvas. Estilo compartido para todas las etiquetas de una llamada: `fontSize` (default 14 — se ajusta al preset fijo más cercano de la cinta de Paint: 8,9,10,11,12,14,16,18,20,22,24,26,28,36,48,...), `fontFamily` (default Arial), `labelColor` (default `#000000`).
+La pregunta más útil es:
 
-> **Limitación conocida**: la aplicación de tamaño/familia de fuente pasa por los ComboBox `FontSizeComboBox`/`FontComboBox` de la cinta de Paint (UI Automation: expandir el combo, ubicar el ítem preestablecido por nombre, invocarlo — confirmado con Accessibility Insights que son listas fijas de presets, no campos de texto libre). En pruebas manuales esta selección no se reflejó de forma confiable en el texto renderizado. El contenido del texto en sí se inserta correctamente (herramienta Texto vía su atajo `T`, cuadro arrastrado con `dragPolyline`, confirmado con `Escape` en vez de un clic de "confirmar" que podía fallar). Si las etiquetas salen con el tamaño equivocado, este es el sospechoso actual — tratá `fontSize`/`fontFamily` como best-effort hasta profundizar más en la causa raíz.
+> **¿Qué puede explicar una IA cuando dibujar forma parte de su lenguaje?**
 
-### `paint_debug_ui`
+---
 
-Diagnóstico: inspecciona el árbol de UI Automation de Paint y resume grupos y controles. Parámetros: `maxDepth` (1–10, por defecto 6), `includeBoundingRectangles` (por defecto false), `filter` (insensible a mayúsculas, por defecto `"shape"`), `windowMode`. Devuelve `paint` (info), `uiLanguageHint`, `groups`, un resumen de `canvas` y los `elements` crudos.
+## Un ejemplo: un objeto de cuatro dimensiones en Paint
 
-### `paint_debug_canvas`
+Uno de los generadores disponibles es un **teseracto**.
 
-Diagnóstico: devuelve la geometría del lienzo activo — `source` (`automation` | `fixed-layout`), `width`/`height`, `logicalWidth`/`logicalHeight`, `clientOrigin`, `screenOrigin`, `drawableInset`, `elementName`, `automationId` — más el `activeCanvasElement` crudo. Úsala para entender dónde se está dibujando realmente.
+Un teseracto es el equivalente tetradimensional de un cubo.
 
-Todas las herramientas comparten el mismo comportamiento: se escribe una línea de log en stderr (`tool started/finished`) y un beep del sistema avisa de que la operación terminó. Las herramientas de debug además imprimen el resultado completo como JSON en `content.text`; `paint_draw` devuelve una frase resumen (el resultado estructurado siempre está disponible en `structuredContent`).
+La implementación comienza con los dieciséis vértices del hipercubo, los proyecta desde cuatro dimensiones hacia tres, vuelve a proyectar el resultado hacia dos dimensiones y finalmente convierte sus treinta y dos aristas en trazos que Paint puede dibujar físicamente.
 
-## Galería de ejemplos
-
-Cada ejemplo es una sola llamada a `paint_draw`. Con `fit: "contain"` diseñas en tu propio espacio de coordenadas (negativas incluidas) y el servidor escala y centra el dibujo en el lienzo.
-
-### 1. Tesseract — hipercubo 4D en alambre
-
-Los 16 vértices de un hipercubo (±1)⁴ se proyectan a 3D con perspectiva en el eje w y luego a 2D: 32 aristas, un stroke por arista. El clásico look de "cubo interior y exterior":
+Desde la perspectiva del cliente MCP, la solicitud sigue siendo semántica:
 
 ```json
 {
@@ -185,92 +225,6 @@ Los 16 vértices de un hipercubo (±1)⁴ se proyectan a 3D con perspectiva en e
   "tool": "pencil",
   "fit": "contain",
   "generators": [
-    { "kind": "solid", "solid": "tesseract", "size": 110, "rotX": 15, "rotY": -30, "projection": "perspective" }
-  ]
-}
-```
-
-Variante: `rotX: 0, rotY: 45` alinea las dos celdas 4D una frente a otra (la vista de cubo doble perfecto).
-
-### 2. Sistema solar — `fit` + `tool: "pencil"`
-
-Sol con `disk`, órbitas como círculos y planetas en ángulos; diseñado en el origen y ajustado a cualquier lienzo:
-
-```json
-{
-  "mode": "generator",
-  "tool": "pencil",
-  "fit": "contain",
-  "generators": [
-    { "kind": "disk", "cx": 0, "cy": 0, "radius": 25 },
-    { "kind": "circle", "cx": 0, "cy": 0, "radius": 80 },
-    { "kind": "circle", "cx": 0, "cy": 0, "radius": 130 },
-    { "kind": "circle", "cx": 0, "cy": 0, "radius": 180 },
-    { "kind": "circle", "cx": 80, "cy": 0, "radius": 4 },
-    { "kind": "circle", "cx": -130, "cy": 0, "radius": 7 }
-  ]
-}
-```
-
-### 3. Tablero de Pac-Man — `grid` + `dotsAlongPath`
-
-Paredes del laberinto como rectángulos, puntos de los pasillos con `grid`, píldoras de poder como `disk` y una ruta punteada con `dotsAlongPath` (espacio de diseño `0..1000 × 0..600`, una sola llamada, 9 generadores):
-
-```json
-{
-  "mode": "generator",
-  "tool": "pencil",
-  "fit": "contain",
-  "generators": [
-    { "kind": "rectangle", "x": 20, "y": 20, "width": 960, "height": 560 },
-    { "kind": "rectangle", "x": 20, "y": 20, "width": 200, "height": 120 },
-    { "kind": "rectangle", "x": 780, "y": 20, "width": 200, "height": 120 },
-    { "kind": "rectangle", "x": 20, "y": 460, "width": 200, "height": 120 },
-    { "kind": "rectangle", "x": 780, "y": 460, "width": 200, "height": 120 },
-    {
-      "kind": "grid",
-      "x": 60,
-      "y": 200,
-      "width": 880,
-      "height": 200,
-      "cols": 22,
-      "rows": 10,
-      "shape": "circle",
-      "radius": 3
-    },
-    { "kind": "disk", "cx": 100, "cy": 100, "radius": 12 },
-    { "kind": "disk", "cx": 900, "cy": 500, "radius": 12 },
-    {
-      "kind": "dotsAlongPath",
-      "path": [
-        { "x": 240, "y": 60 },
-        { "x": 760, "y": 60 }
-      ],
-      "radius": 3,
-      "spacing": 24
-    }
-  ]
-}
-```
-
-### 4. Composición de sólidos 3D — `solid` + `torus` + `torusKnot`
-
-Cuatro sólidos 3D en alambre en una sola llamada, centrados en el origen y ajustados al lienzo — nótese que cada arista es un stroke de 2 puntos (30 + 32 + 24 + 1 = 87 trazos):
-
-```json
-{
-  "mode": "generator",
-  "tool": "pencil",
-  "fit": "contain",
-  "generators": [
-    {
-      "kind": "solid",
-      "solid": "dodecahedron",
-      "size": 100,
-      "rotX": -20,
-      "rotY": 25,
-      "projection": "perspective"
-    },
     {
       "kind": "solid",
       "solid": "tesseract",
@@ -278,290 +232,286 @@ Cuatro sólidos 3D en alambre en una sola llamada, centrados en el origen y ajus
       "rotX": 15,
       "rotY": -30,
       "projection": "perspective"
-    },
-    {
-      "kind": "torus",
-      "majorRadius": 90,
-      "tubeRadius": 30,
-      "segments": 16,
-      "rings": 8
-    },
-    {
-      "kind": "torusKnot",
-      "p": 2,
-      "q": 3,
-      "radius": 80,
-      "tubeRadius": 22,
-      "steps": 400
     }
   ]
 }
 ```
 
-### 5. Trazos libres — `freehand`
+Paint no sabe absolutamente nada sobre geometría de cuatro dimensiones.
 
-`mode: "freehand"` con uno o más trazos (zigzag + línea base), cada uno con un único arrastre:
+No necesita saberlo.
 
-```json
-{
-  "mode": "freehand",
-  "tool": "pencil",
-  "fit": "contain",
-  "strokes": [
-    {
-      "points": [
-        { "x": 0, "y": 60 },
-        { "x": 60, "y": 0 },
-        { "x": 120, "y": 60 },
-        { "x": 180, "y": 0 },
-        { "x": 240, "y": 60 }
-      ]
-    },
-    {
-      "points": [
-        { "x": 0, "y": 90 },
-        { "x": 240, "y": 90 }
-      ]
-    }
-  ]
-}
+Simplemente es la superficie final donde una idea abstracta se vuelve visible.
+
+Esa separación es parte central de la arquitectura.
+
+---
+
+## No es automatización a ciegas
+
+La inteligencia artificial fue utilizada extensamente durante la construcción de este proyecto.
+
+Pero utilizar IA nunca fue la parte interesante.
+
+La parte interesante fue decidir **qué necesitaba comprenderse antes de automatizarse**.
+
+A lo largo del experimento, el proceso se repitió muchas veces:
+
+```text
+observar
+  ↓
+preguntar
+  ↓
+inspeccionar
+  ↓
+modelar
+  ↓
+experimentar
+  ↓
+especificar
+  ↓
+implementar
+  ↓
+verificar
 ```
 
-### 6. Tablero de damas — `grid` de rectángulos + círculos
+Por ejemplo, el servidor no asume que el lienzo de Paint siempre se encuentra en una coordenada fija de la pantalla.
 
-Dos grids sobre la misma región: las casillas del tablero y un punto en el centro de cada celda:
+Descubre y resuelve el contexto de la aplicación, mantiene la sesión de Paint, transforma coordenadas lógicas hacia el área de dibujo real y utiliza APIs de Windows para ejecutar la interacción.
 
-```json
-{
-  "mode": "generator",
-  "tool": "pencil",
-  "fit": "contain",
-  "generators": [
-    { "kind": "grid", "x": 0, "y": 0, "width": 800, "height": 800, "cols": 8, "rows": 8, "shape": "rectangle", "itemWidth": 95, "itemHeight": 95 },
-    { "kind": "grid", "x": 0, "y": 0, "width": 800, "height": 800, "cols": 8, "rows": 8, "shape": "circle", "radius": 10 }
-  ]
-}
+Los resultados también pueden verificarse después del dibujo, en lugar de asumir que la ausencia de una excepción significa que realmente apareció tinta en el lienzo.
+
+El objetivo no es ocultar la participación de la IA en el proceso de ingeniería.
+
+Tampoco celebrarla simplemente porque produjo código.
+
+El experimento intenta explorar algo distinto:
+
+**utilizar IA para investigar un sistema con mayor profundidad, manteniendo explícitos el entendimiento, la arquitectura y la verificación.**
+
+---
+
+## Cómo funciona
+
+A alto nivel:
+
+```text
+LLM / Cliente MCP
+        │
+        ▼
+    Servidor MCP
+        │
+        ▼
+ PaintController
+        │
+        ├── Gestión de sesión de Paint
+        ├── Descubrimiento con UI Automation
+        ├── Resolución semántica del lienzo
+        ├── Generadores matemáticos
+        └── Transformación de coordenadas
+        │
+        ▼
+ Adaptador Win32 / SendInput
+        │
+        ▼
+ Microsoft Paint
 ```
 
-### 7. Rosa de los vientos — `starPolygon`, `regularPolygon`, `arc`, `logarithmicSpiral`
+El código sigue una arquitectura por capas / hexagonal que mantiene el dominio matemático independiente de la automatización específica de Windows.
 
-Una mandala que mezcla los generadores 2D alrededor de un centro común:
+La capa de geometría pura no sabe nada sobre Paint.
 
-```json
-{
-  "mode": "generator",
-  "tool": "pencil",
-  "fit": "contain",
-  "generators": [
-    { "kind": "starPolygon", "cx": 0, "cy": 0, "outerRadius": 110, "innerRadius": 45, "points": 8, "rotationDeg": 22.5 },
-    { "kind": "regularPolygon", "cx": 0, "cy": 0, "radius": 120, "sides": 8, "rotationDeg": 22.5 },
-    { "kind": "circle", "cx": 0, "cy": 0, "radius": 140 },
-    { "kind": "logarithmicSpiral", "cx": 0, "cy": 0, "growth": 1.12, "turns": 2.5, "angleStep": 0.05, "scale": 5 },
-    { "kind": "arc", "cx": 0, "cy": 0, "radius": 160, "startDeg": 0, "endDeg": 270, "stepDeg": 6 }
-  ]
-}
+La capa de orquestación de Paint no sabe nada sobre los clientes MCP.
+
+La infraestructura de Windows implementa los mecanismos necesarios para convertir todo lo anterior en una interacción real.
+
+Para profundizar en la arquitectura técnica, consulta la documentación indicada más abajo.
+
+---
+
+## Capacidades MCP
+
+El servidor expone actualmente siete herramientas MCP.
+
+| Tool                 | Propósito                                        |
+| -------------------- | ------------------------------------------------ |
+| `paint_draw`         | Dibujo libre 2D y DSL matemático                 |
+| `paint_draw_3d`      | Proyección y dibujo de geometría wireframe 3D/4D |
+| `paint_napkin`       | Primitivas simples de pensamiento visual         |
+| `paint_edit`         | Borrado, relleno, texto y recorte                |
+| `paint_canvas`       | Redimensionamiento y gestión del lienzo          |
+| `paint_debug_ui`     | Inspección del árbol UI Automation de Paint      |
+| `paint_debug_canvas` | Inspección de la geometría resuelta del lienzo   |
+
+Las APIs productivas trabajan en un espacio lógico de dibujo y no obligan al cliente a conocer dónde se encuentra Paint físicamente en la pantalla.
+
+---
+
+## La capa semántica de dibujo
+
+El DSL 2D incluye actualmente generadores como:
+
+```text
+ellipse
+circle
+disk
+arc
+rectangle
+roundedRectangle
+polyline
+logarithmicSpiral
+regularPolygon
+starPolygon
+grid
+dotsAlongPath
 ```
 
-### 8. Jarrón — superficie de `revolution`
+La capa 3D incluye:
 
-El perfil `{x = radio, y = altura}` se rota alrededor del eje Y en 16 segmentos:
-
-```json
-{
-  "mode": "generator",
-  "tool": "pencil",
-  "fit": "contain",
-  "generators": [
-    {
-      "kind": "revolution",
-      "profile": [
-        { "x": 15, "y": -70 },
-        { "x": 55, "y": -40 },
-        { "x": 75, "y": 0 },
-        { "x": 45, "y": 35 },
-        { "x": 65, "y": 60 },
-        { "x": 40, "y": 75 },
-        { "x": 8, "y": 80 }
-      ],
-      "segments": 16
-    }
-  ]
-}
+```text
+tetrahedron
+cube
+octahedron
+dodecahedron
+icosahedron
+greatIcosahedron
+starOctangula
+tesseract
+torus
+torusKnot
+revolution
+wireframe
 ```
 
-### 9. Diamante low-poly — malla `wireframe`
+Estas descripciones se validan antes de alcanzar la capa de dibujo y se transforman primero en geometría pura antes de producir cualquier interacción con Windows.
 
-Vértices y aristas explícitos (pirámide superior, cuadrado central, pirámide inferior):
+La referencia completa del DSL se encuentra en:
 
-```json
-{
-  "mode": "generator",
-  "tool": "pencil",
-  "fit": "contain",
-  "generators": [
-    {
-      "kind": "wireframe",
-      "vertices": [
-        { "x": 0, "y": 90, "z": 0 },
-        { "x": -45, "y": 0, "z": -45 },
-        { "x": 45, "y": 0, "z": -45 },
-        { "x": 45, "y": 0, "z": 45 },
-        { "x": -45, "y": 0, "z": 45 },
-        { "x": 0, "y": -90, "z": 0 }
-      ],
-      "edges": [
-        [0, 1], [0, 2], [0, 3], [0, 4],
-        [1, 2], [2, 3], [3, 4], [4, 1],
-        [1, 5], [2, 5], [3, 5], [4, 5]
-      ],
-      "size": 1.6,
-      "rotX": -20,
-      "rotY": 25
-    }
-  ]
-}
+**[`docs/dsl-paint-draw.md`](docs/dsl-paint-draw.md)**
+
+---
+
+## Bajo la superficie: comprendiendo Paint
+
+El proyecto utiliza Windows UI Automation para descubrir controles de la aplicación en lugar de depender exclusivamente de coordenadas fijas del toolbar.
+
+Esa investigación terminó siendo suficientemente útil como para documentarla de manera independiente.
+
+Si te interesa comprender cómo una aplicación moderna de Windows puede inspeccionarse y automatizarse a través de su modelo de accesibilidad, consulta:
+
+**[`docs/windows-automation-uia.md`](docs/windows-automation-uia.md)**
+
+También existe un recorrido práctico utilizando PowerShell:
+
+**[`docs/tutorial-paint-powershell.md`](docs/tutorial-paint-powershell.md)**
+
+Estos documentos preservan la investigación de ingeniería que existe detrás de la implementación MCP, en lugar de esconderla detrás de la API final.
+
+---
+
+## Inicio rápido
+
+### Requisitos
+
+* Windows
+* Microsoft Paint
+* Node.js
+* PowerShell
+* un cliente compatible con MCP
+
+Clona el repositorio:
+
+```bash
+git clone https://github.com/miguelcespedes/mcp-server-microsoft-paint-nodejs.git
+cd mcp-server-microsoft-paint-nodejs
 ```
 
-### 10. Poliedro estrellado — `greatIcosahedron` con `starFaces`
-
-Poliedro estrellado de Kepler-Poinsot en perspectiva: el esqueleto exacto de 30 aristas más las 20 caras estrelladas que se cruzan:
-
-```json
-{
-  "mode": "generator",
-  "tool": "pencil",
-  "fit": "contain",
-  "generators": [
-    { "kind": "solid", "solid": "greatIcosahedron", "starFaces": true, "projection": "perspective" }
-  ]
-}
-```
-
-### 11. Ruta punteada — `dotsAlongPath`
-
-Círculos pequeños distribuidos a lo largo de un sendero polilínea (22 puntos en ~410 px):
-
-```json
-{
-  "mode": "generator",
-  "tool": "pencil",
-  "fit": "contain",
-  "generators": [
-    {
-      "kind": "dotsAlongPath",
-      "path": [
-        { "x": 0, "y": 0 },
-        { "x": 120, "y": 40 },
-        { "x": 200, "y": 0 },
-        { "x": 300, "y": 60 },
-        { "x": 400, "y": 20 }
-      ],
-      "radius": 4,
-      "spacing": 18
-    }
-  ]
-}
-```
-
-### 12. Hombre de Vitruvio — coordenadas negativas + `fit: "contain"`
-
-Las proporciones de Leonardo como composición pura: el círculo está centrado en el ombligo (el origen del espacio de diseño), el cuadrado en el pubis (`y = -200`, con su borde superior a la altura de los hombros, `y = 200`), y la figura es un conjunto de `polyline`s — los brazos en cuadrado descansan sobre el borde superior del cuadrado, y las manos elevadas y los pies abiertos tocan el círculo (`240² + 320² = 400²`). Las coordenadas negativas están permitidas en el espacio de diseño; `fit: "contain"` lo mapea todo al lienzo (una sola llamada, 11 generadores, bounds verificados `70,25..430,475` sobre un lienzo de 500×500):
-
-```json
-{
-  "mode": "generator",
-  "tool": "pencil",
-  "fit": "contain",
-  "generators": [
-    { "kind": "circle", "cx": 0, "cy": 0, "radius": 400 },
-    { "kind": "rectangle", "x": -400, "y": -600, "width": 800, "height": 800 },
-    { "kind": "circle", "cx": 0, "cy": 350, "radius": 50 },
-    { "kind": "polyline", "points": [{ "x": -400, "y": 200 }, { "x": 400, "y": 200 }] },
-    { "kind": "polyline", "points": [{ "x": -200, "y": 200 }, { "x": -240, "y": 320 }] },
-    { "kind": "polyline", "points": [{ "x": 200, "y": 200 }, { "x": 240, "y": 320 }] },
-    { "kind": "polyline", "points": [{ "x": 0, "y": 300 }, { "x": 0, "y": -200 }] },
-    { "kind": "polyline", "points": [{ "x": 0, "y": -200 }, { "x": 0, "y": -600 }] },
-    { "kind": "polyline", "points": [{ "x": 0, "y": -200 }, { "x": -240, "y": -320 }] },
-    { "kind": "polyline", "points": [{ "x": 0, "y": -200 }, { "x": 240, "y": -320 }] },
-    { "kind": "disk", "cx": 0, "cy": 0, "radius": 6 }
-  ]
-}
-```
-
-## El resolver del lienzo
-
-Las coordenadas de dibujo son **relativas al lienzo**: `(0,0)` es la esquina superior izquierda de la página blanca y el espacio de dibujo es el tamaño lógico de la imagen (leído del elemento de automatización `CanvasSizeTextBlock`, p. ej. 500×500), no el tamaño de la ventana.
-
-Estrategia de resolución (en orden):
-
-1. **Elemento semántico** — un elemento con `automationId: "image"` o con nombre que contenga `lienzo`/`canvas`, mayor de 200×200. Los límites físicos se tratan como el lienzo más un `drawableInset` de 8 px (bordes/manijas de redimensionado).
-2. **Candidatos puntuados** — elementos visibles `Pane`/`Custom`/`Document`/`Image`/`Group` puntuados por señales (id `image`, nombres tipo lienzo, tamaño plausible vs. cliente de la ventana, penalización por contenedores de ventana completa).
-3. **Fallback de layout fijo** — un rectángulo derivado del layout cuando UIA no expone nada útil (`source: "fixed-layout"`).
-
-Mapeo de coordenadas: lienzo lógico → área dibujable (menos el inset) → píxeles de cliente → píxeles de pantalla (`clientToScreen`). Cada punto se valida contra el lienzo y se rechaza con `DRAW_BOUNDS_OUTSIDE_CANVAS` antes de inyectar cualquier entrada de mouse.
-
-## Ciclo de vida de la ventana
-
-El driver mantiene **una única ventana de Paint gestionada**: la primera llamada a `paint_draw` la abre, y las siguientes la reutilizan vaciando antes su lienzo (`Ctrl+A`, `Supr`), de modo que no se acumulan procesos de `mspaint`. Al arrancar de nuevo, el driver adopta la ventana de Paint superior (normalmente la suya de un proceso anterior) en vez de abrir otra; nunca toca ventanas que no creó cuando son antiguas o de fondo.
-
-Cada operación pasa por `PaintSessionStore.ensureReady`:
-
-- localizar la ventana de Paint (`"current"`) o lanzar una nueva (`"new"`; `mspaint.exe` o el AUMID de la app empaquetada vía shell)
-- restaurar si está minimizada, maximizar, traer al primer plano con reintentos
-- esperar a que el rectángulo de la ventana y el tamaño del cliente sean estables (con período de gracia)
-- refrescar el árbol UIA y resolver el lienzo
-
-`paint_draw` dibuja sobre el lienzo resuelto con arrastres de `SendInput`. La entrada se valida contra los límites lógicos del lienzo antes de inyectar cualquier entrada (`DRAW_BOUNDS_OUTSIDE_CANVAS`).
-
-## Estrategia de UI Automation
-
-- Windows: `Windows 10 Pro 24H2` (build `26100`); Paint: `Microsoft.Paint 11.2605.71.0 x64`.
-- El puente UIA es `scripts/paint-uia.ps1` (PowerShell 5.1 con los ensamblados `UIAutomationClient`/`UIAutomationTypes` incluidos; no hace falta el SDK de .NET).
-- El puente soporta dos ámbitos: `window` (el árbol de la ventana de Paint) y `desktop-children` (niveles superiores/popups — se usa para inspeccionar los menús desplegables que no forman parte del árbol de la ventana).
-- Los metadatos localizados se manejan con coincidencia de aliases normalizados (`lienzo`/`canvas`, `en el lienzo`/`on the canvas`, `herramienta brocha`/`brush tool`, `canvassizetextblock`).
-
-Por qué el DSL de generadores: el dibujo se hace con trazos de mouse reales, así que el resultado siempre es visible — sin depender de las herramientas de forma nativas de Paint (que por defecto crean la forma sin contorno ni relleno) ni de sus menús de estilo (no capturables de forma fiable vía UIA).
-
-## Integración con OpenCode
-
-El repositorio incluye una configuración de OpenCode:
-
-- `opencode.json` registra el servidor como cliente MCP local (`paint-local`, `node dist/server.js`) con permisos que permiten arrancar el servidor compilado pero deniegan build/test/install.
-- `.opencode/agent/paint-mcp.md` — agente especializado en dibujar con las tools `paint_*`.
-- `.opencode/command/paint-debug.md` — el comando `/paint-debug` para diagnosticar el estado de Paint/UI.
-
-## Modelo de errores
-
-`PaintMcpError` con códigos devueltos como errores MCP estructurados (`isError: true`, `structuredContent`):
-
-`PAINT_NOT_RUNNING`, `PAINT_WINDOW_NOT_FOUND`, `UI_AUTOMATION_UNAVAILABLE`, `CANVAS_NOT_FOUND`, `INVALID_CANVAS_BOUNDS`, `DRAW_BOUNDS_OUTSIDE_CANVAS`, `INPUT_INJECTION_FAILED`.
-
-## Dependencias
-
-Runtime: `@modelcontextprotocol/sdk`, `koffi`, `zod`. Dev: `typescript`, `tsx`, `@types/node`, `@modelcontextprotocol/inspector`.
-
-## Requisitos
-
-- Windows 10 u 11, Microsoft Paint instalado, sesión de escritorio interactiva, PowerShell disponible.
-- La app de Paint empaquetada puede lanzarse a través de stubs de `mspaint.exe`; los metadatos UIA varían entre versiones de Paint e idiomas del SO.
-
-## Instalación y ejecución
+Instala las dependencias:
 
 ```bash
 npm install
-npm run build      # compila a dist/
-npm start          # ejecuta el servidor compilado (MCP por stdio)
-npm run dev        # modo desarrollo
-npm run inspect    # MCP Inspector
 ```
 
-`npm install` puede requerir `npm approve-scripts koffi` si los scripts nativos de instalación están restringidos.
-
-## Tests
+Compila:
 
 ```bash
 npm run build
-npm test
 ```
 
-Los tests unitarios (`test/unit/*.test.mjs`) cubren la matemática de figuras 2D y los helpers de composición (`figures.test.mjs`), los sólidos 3D en alambre — conteos de vértices/aristas, longitudes de aristas exactas, proyección en perspectiva, tesseract, toro, nudo toroidal, revolución y mallas wireframe genéricas (`solids.test.mjs`) — además de la validación de puntos del lienzo, el mapeo de coordenadas con insets y la serialización de handles de ventana. No abren ventanas reales de Paint.
+Ejecuta el servidor MCP:
+
+```bash
+npm start
+```
+
+Consulta `.mcp.json` para ver un ejemplo de configuración MCP.
+
+---
+
+## Un pequeño experimento que vale la pena preservar
+
+Este repositorio no pretende convertir Microsoft Paint en software gráfico profesional.
+
+Ya existen herramientas muchísimo mejores para eso.
+
+Paint resulta útil aquí precisamente debido a sus limitaciones.
+
+Proporciona un entorno familiar y restringido en el que algunas preguntas resultan más fáciles de observar:
+
+¿Cómo debería describir una IA una idea visual?
+
+¿Dónde debería terminar la semántica y comenzar la automatización específica de una aplicación?
+
+¿Cuánto necesitamos comprender una aplicación antes de poder automatizarla de manera confiable?
+
+¿Puede un lienzo simple convertirse en una interfaz útil para razonamiento matemático o educativo?
+
+¿Y qué ocurre cuando dejamos de mirar al software antiguo únicamente desde el propósito para el cual fue originalmente creado?
+
+No conozco todavía todas las respuestas.
+
+Esa es parte de la razón por la que existe este repositorio.
+
+---
+
+## Documentación
+
+| Documento                                                                | Propósito                                                   |
+| ------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| [`docs/dsl-paint-draw.md`](docs/dsl-paint-draw.md)                       | DSL matemático y referencia de generadores                  |
+| [`docs/windows-automation-uia.md`](docs/windows-automation-uia.md)       | Investigación de Paint mediante Windows UI Automation       |
+| [`docs/tutorial-paint-powershell.md`](docs/tutorial-paint-powershell.md) | Tutorial práctico de automatización de Paint con PowerShell |
+
+Los detalles adicionales de arquitectura, ejemplos, pruebas y decisiones de implementación pueden ir trasladándose progresivamente a esta sección a medida que el experimento evolucione.
+
+---
+
+## Estado
+
+Este es un proyecto experimental.
+
+Algunas capacidades son deliberadamente exploratorias y determinadas partes de la interfaz de Microsoft Paint continúan siendo menos deterministas que otras.
+
+Eso no se oculta.
+
+Las limitaciones también forman parte de la investigación.
+
+Si encuentras un caso límite, una mejor abstracción semántica, un generador matemático interesante o simplemente otro uso inesperado para este lienzo, las contribuciones y experimentos son bienvenidos.
+
+---
+
+## Una última idea
+
+La curiosidad es buena abriendo caminos.
+
+La disciplina evita que aquello que encontramos desaparezca.
+
+Y cuando un descubrimiento queda preservado, otra persona puede utilizarlo como punto de partida para una nueva exploración.
+
+Quizá sea así como la curiosidad se vuelve acumulativa.
+
+---
+
+## Licencia
+
+Consulta la licencia del repositorio para más detalles.
