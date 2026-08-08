@@ -33,6 +33,36 @@ export function findPaintWindows(): proc.WindowInfo[] {
     .filter((window) => window.visible && isPaintWindow(window));
 }
 
+/**
+ * Elige la mejor ventana candidata entre varias instancias de Paint:
+ * prioriza una que esté dentro de un monitor visible y no minimizada. Si
+ * ninguna califica, lanza PAINT_WINDOW_NOT_VISIBLE con el detalle de la
+ * primera candidata en vez de devolver silenciosamente existing[0].
+ */
+function pickBestPaintWindow(candidates: proc.WindowInfo[]): proc.WindowInfo {
+  const usable = candidates.find(
+    (window) =>
+      !proc.isWindowMinimized(window.hwnd) &&
+      proc.isWindowOnVisibleMonitor(window.hwnd),
+  );
+
+  if (usable) {
+    return usable;
+  }
+
+  const first = candidates[0];
+  throw new PaintMcpError(
+    "PAINT_WINDOW_NOT_VISIBLE",
+    "Se encontraron ventanas de Paint pero ninguna está visible en un " +
+      "monitor activo (todas están minimizadas o posicionadas fuera del " +
+      "escritorio visible).",
+    {
+      hwnd: `0x${first.hwnd.toString(16).padStart(16, "0")}`,
+      candidateCount: candidates.length,
+    },
+  );
+}
+
 function toLocatedWindow(paintWindow: PaintWindow): LocatedPaintWindow {
   const hwnd = parseWindowHandleHex(paintWindow.info.windowHandle);
   return {
@@ -65,14 +95,14 @@ export async function locatePaintWindow(
         "Paint is not running.",
       );
     }
-    return { ...existing[0], createdBy: "opened" };
+    return { ...pickBestPaintWindow(existing), createdBy: "opened" };
   }
 
   if (windowMode === "current") {
     if (existing.length === 0) {
       return toLocatedWindow(await acquireManagedPaintWindow());
     }
-    return { ...existing[0], createdBy: "opened" };
+    return { ...pickBestPaintWindow(existing), createdBy: "opened" };
   }
 
   return toLocatedWindow(await acquireManagedPaintWindow());

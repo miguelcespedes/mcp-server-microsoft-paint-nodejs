@@ -178,6 +178,9 @@ export const SM_YVIRTUALSCREEN = 77;
 export const SM_CXVIRTUALSCREEN = 78;
 export const SM_CYVIRTUALSCREEN = 79;
 
+/** MonitorFromWindow: si no hay intersección, devuelve el monitor más cercano. */
+export const MONITOR_DEFAULTTONEAREST = 2;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Firmas tipadas usadas para tipar los bindings
 // ─────────────────────────────────────────────────────────────────────────────
@@ -354,3 +357,31 @@ export const sendInput = user32.func(
   pInputs: InputLike | InputLike[],
   cbSize: number,
 ) => number;
+
+/** MONITORINFO: geometría de un monitor (rcMonitor: pantalla completa, rcWork: área de trabajo). */
+export const MONITORINFO = koffi.struct("MONITORINFO", {
+  cbSize: DWORD,
+  rcMonitor: RECT,
+  rcWork: RECT,
+  dwFlags: DWORD,
+});
+
+export interface MonitorInfoLike {
+  cbSize: number;
+  rcMonitor: RectLike;
+  rcWork: RectLike;
+  dwFlags: number;
+}
+
+/** Tamaño en bytes de MONITORINFO, requerido como cbSize antes de llamar a GetMonitorInfoW. */
+export const sizeofMonitorInfo = koffi.sizeof(MONITORINFO);
+
+/** Devuelve el HMONITOR del monitor que contiene (o está más cerca de) la ventana. */
+export const monitorFromWindow = user32.func(
+  "HANDLE __stdcall MonitorFromWindow(HWND hwnd, DWORD dwFlags)",
+) as unknown as (hwnd: bigint, flags: number) => bigint;
+
+/** Obtiene la geometría del monitor identificado por hMonitor. */
+export const getMonitorInfoW = user32.func(
+  "bool __stdcall GetMonitorInfoW(HANDLE hMonitor, _Inout_ MONITORINFO *lpmi)",
+) as unknown as (hMonitor: bigint, info: MonitorInfoLike) => boolean;

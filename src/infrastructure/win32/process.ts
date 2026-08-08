@@ -8,6 +8,7 @@
 
 import { spawn } from "node:child_process";
 import type { Logger } from "../logging/logger.js";
+import { PaintMcpError } from "../errors/paint-mcp-error.js";
 import * as shell from "./shell.js";
 import * as win32 from "./user32.js";
 
@@ -319,6 +320,12 @@ export function isWindowMaximized(hwnd: bigint): boolean {
   return Boolean(win32.isZoomed(hwnd));
 }
 
+/** Comprueba si la ventana está minimizada (iconizada). */
+export function isWindowMinimized(hwnd: bigint): boolean {
+  assertValidWindow(hwnd, "isWindowMinimized");
+  return Boolean(win32.isIconic(hwnd));
+}
+
 /** Obtiene el rectángulo exterior de la ventana en coordenadas de pantalla. */
 export function getWindowRect(hwnd: bigint): Rectangle2D {
   assertValidWindow(hwnd, "getWindowRect");
@@ -339,6 +346,59 @@ export function getWindowRect(hwnd: bigint): Rectangle2D {
     width: rect.right - rect.left,
     height: rect.bottom - rect.top,
   };
+}
+
+/**
+ * Geometría del monitor que contiene la ventana (o el más cercano si la
+ * ventana está fuera de todos los monitores). A diferencia de
+ * getPrimaryMonitorInfo(), esto refleja el monitor REAL en el que vive la
+ * ventana, imprescindible en configuraciones multi-monitor.
+ */
+export function getWindowMonitorInfo(hwnd: bigint): Rectangle2D {
+  assertValidWindow(hwnd, "getWindowMonitorInfo");
+
+  const hMonitor = win32.monitorFromWindow(hwnd, win32.MONITOR_DEFAULTTONEAREST);
+  const info: win32.MonitorInfoLike = {
+    cbSize: win32.sizeofMonitorInfo,
+    rcMonitor: { left: 0, top: 0, right: 0, bottom: 0 },
+    rcWork: { left: 0, top: 0, right: 0, bottom: 0 },
+    dwFlags: 0,
+  };
+
+  const succeeded = win32.getMonitorInfoW(hMonitor, info);
+  if (!succeeded) {
+    throw new Error(
+      `GetMonitorInfoW falló para la ventana ${hwndToHexString(hwnd)}.`,
+    );
+  }
+
+  const rect = info.rcMonitor;
+  return {
+    left: rect.left,
+    top: rect.top,
+    right: rect.right,
+    bottom: rect.bottom,
+    width: rect.right - rect.left,
+    height: rect.bottom - rect.top,
+  };
+}
+
+/** Exportado para pruebas unitarias puras sin depender de llamadas Win32 reales. */
+export function rectsIntersect(a: Rectangle2D, b: Rectangle2D): boolean {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
+/**
+ * True si la ventana se solapa con el monitor que Windows considera más
+ * cercano a ella. False indica que la ventana está posicionada fuera de
+ * cualquier área de escritorio visible (p. ej. tras desconectar un monitor
+ * secundario), lo que hace inútil cualquier automatización de mouse sobre
+ * ella aunque no esté minimizada.
+ */
+export function isWindowOnVisibleMonitor(hwnd: bigint): boolean {
+  const windowRect = getWindowRect(hwnd);
+  const monitorRect = getWindowMonitorInfo(hwnd);
+  return rectsIntersect(windowRect, monitorRect);
 }
 
 function areRectsEqual(left: Rectangle2D, right: Rectangle2D): boolean {
@@ -468,6 +528,18 @@ export async function ensureWindowReady(
     logger?.debug("Paint window maximized", {
       hwnd: hwndToHexString(hwnd),
     });
+  }
+
+  if (!isWindowOnVisibleMonitor(hwnd)) {
+    const rect = getWindowRect(hwnd);
+    throw new PaintMcpError(
+      "PAINT_WINDOW_NOT_VISIBLE",
+      "La ventana de Paint está posicionada fuera de cualquier monitor " +
+        "activo, por lo que dibujar en ella no producirá ningún resultado " +
+        "visible (esto ocurre p. ej. si se desconectó un monitor secundario " +
+        "donde estaba la ventana).",
+      { hwnd: hwndToHexString(hwnd), rect },
+    );
   }
 
   if (foreground) {
@@ -668,9 +740,14 @@ export function mouseButtonUp(): void {
   sendMouseInput({ flags: win32.MOUSEEVENTF_LEFTUP });
 }
 
-/** Clic izquierdo completo en una posición absoluta de pantalla. */
+/**
+ * Clic izquierdo completo en una posición absoluta de pantalla. Posiciona
+ * el cursor vía SendInput (mouseMoveAbsolute), no SetCursorPos: ver el
+ * comentario en dragPolyline sobre por qué mezclar ambos mecanismos puede
+ * hacer que apps WinUI3/XAML no registren el clic en la posición esperada.
+ */
 export async function clickAt(point: Point2D): Promise<void> {
-  setCursorPosition(point);
+  mouseMoveAbsolute(point);
   await sleep(40);
   mouseButtonDown();
   await sleep(40);
@@ -723,7 +800,15 @@ export async function dragPolyline(
     throw new Error("dragPolyline necesita al menos 2 puntos.");
   }
 
-  setCursorPosition(points[0]);
+  // Todo el gesto (posición inicial, botón, movimientos) debe inyectarse
+  // vía SendInput, NO mezclar con SetCursorPos: son mecanismos de entrada
+  // distintos, y apps WinUI3/XAML como el Paint moderno correlacionan el
+  // mouse-down con la posición reportada por el flujo de SendInput. Si el
+  // punto inicial se coloca con SetCursorPos, el cursor se ve moverse pero
+  // el botón puede registrarse en una posición no sincronizada, y Paint no
+  // llega a interpretar un trazo real (aunque el cursor recorra la ruta
+  // completa en pantalla).
+  mouseMoveAbsolute(points[0]);
   await sleep(60);
 
   mouseButtonDown();
@@ -761,7 +846,7 @@ export async function dragShapeBounds(
     );
   }
 
-  setCursorPosition(start);
+  mouseMoveAbsolute(start);
   await sleep(80);
 
   mouseButtonDown();

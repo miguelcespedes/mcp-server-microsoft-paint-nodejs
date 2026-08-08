@@ -59,16 +59,6 @@ import type {
 const logger = createLogger();
 const automationClient = new AutomationClient();
 
-/**
- * Botón "Lápiz" de la barra de herramientas (coordenadas de área cliente).
- * Con la ventana maximizada el grupo "Herramientas" está EXPANDIDO y el
- * botón es visible directamente (no hace falta abrir el flyout).
- * Centro del rect 40x40 en cliente (308, 62).
- * NOTA: por defecto NO se usa (Paint inicia con la Brocha, que dibuja sin
- * tocar el toolbar); se reserva para cuando se pida explícitamente.
- */
-const PENCIL_BUTTON = { x: 328, y: 82 };
-
 /** Botón "Cubo de pintura" (Fill) en la barra de herramientas. */
 const FILL_BUTTON = { x: 368, y: 82 };
 
@@ -183,15 +173,76 @@ async function maximizePaintWindow(hwnd: bigint): Promise<void> {
 // Selección de herramienta
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// El Paint moderno de Windows 11 no responde a los atajos de teclado de
-// herramientas (P/B/E/...) . Con la ventana maximizada el grupo "Herramientas"
-// está expandido y el botón "Lápiz" es visible directamente en la barra.
+// La Brocha es, a efectos visuales, un Lápiz con 3px de grosor por defecto
+// (confirmado empíricamente) — no hay razón para pelear con el split-button
+// "Pinceles" de la cinta, cuyo Invoke() vía UI Automation abre su flyout de
+// estilos en vez de aplicar la herramienta. En vez de eso, SIEMPRE se
+// selecciona Lápiz y se ajusta el grosor cuando se pidió el equivalente a
+// Brocha (ver ensureDrawingToolActive).
+//
+// La selección usa el atajo de teclado "P" (confirmado con el tooltip del
+// botón), no coordenadas de pantalla: es independiente del idioma, tema o
+// posición de la ventana/monitor.
 
 async function selectPencilTool(hwnd: bigint): Promise<void> {
-  const pencilScreen = proc.clientToScreen(hwnd, PENCIL_BUTTON);
-
-  await proc.clickAt(pencilScreen);
+  await proc.ensureWindowReady(hwnd, { foreground: true, maximize: false });
+  proc.pressKey(win32.VK_P);
   await proc.sleep(300);
+}
+
+/**
+ * Determina la herramienta activa a partir del nombre accesible del grupo
+ * del canvas (p. ej. "Usando la herramienta Lápiz en el lienzo"). Paint
+ * expone esto de forma fiable via UIA; es más barato y robusto que asumir
+ * un estado por defecto que ediciones previas (crop, verifyDraw, uso
+ * manual) pueden haber cambiado silenciosamente.
+ */
+function activeToolFromCanvasName(
+  elementName: string | undefined,
+): "pencil" | "other" {
+  if (!elementName) {
+    return "other";
+  }
+  const lower = elementName.toLowerCase();
+  if (lower.includes("lápiz") || lower.includes("lapiz") || lower.includes("pencil")) {
+    return "pencil";
+  }
+  return "other";
+}
+
+/**
+ * Asegura que el Lápiz (única herramienta de dibujo que se selecciona de
+ * forma fiable) esté realmente activo antes de arrastrar, en vez de confiar
+ * en que nadie la cambió desde la última operación. Sin esto, un
+ * crop/selección previo deja "Selección" activa y el siguiente
+ * drawPolyline/drawFreehand solo crea una marquesina de selección: ningún
+ * píxel de tinta real, pero la llamada reporta éxito igualmente (el bug que
+ * motivó este fix).
+ */
+async function ensureDrawingToolActive(
+  hwnd: bigint,
+  canvasElementName: string | undefined,
+): Promise<void> {
+  if (activeToolFromCanvasName(canvasElementName) === "pencil") {
+    return;
+  }
+  await selectPencilTool(hwnd);
+}
+
+/** Grosor con el que la Brocha dibuja por defecto en Paint (Lápiz + 3px). */
+const BRUSH_EQUIVALENT_THICKNESS = 3;
+
+/**
+ * Resuelve el grosor a aplicar: el explícito si se pidió uno, o el
+ * equivalente visual de la Brocha (3px) cuando no se pidió el Lápiz "puro"
+ * (skipToolSelection === false). Con el Lápiz puro, no tocar el grosor deja
+ * el trazo fino por defecto de Paint.
+ */
+function resolveEffectiveThickness(options: DrawOptions): number | undefined {
+  if (options.thickness) {
+    return options.thickness;
+  }
+  return options.skipToolSelection === false ? undefined : BRUSH_EQUIVALENT_THICKNESS;
 }
 
 /**
@@ -668,11 +719,10 @@ async function createPaintWindow(
 
       const mappedPoints = mapPointsIntoDrawingRegion(points, canvas, "points");
       const clientPoints = canvasPointsToClientPoints(canvas, mappedPoints, "points");
-      if (options.skipToolSelection === false) {
-        await selectPencilTool(window.hwnd);
-      }
-      if (options.thickness) {
-        await setBrushThickness(window.hwnd, options.thickness);
+      await ensureDrawingToolActive(window.hwnd, canvas.elementName);
+      const effectiveThickness = resolveEffectiveThickness(options);
+      if (effectiveThickness) {
+        await setBrushThickness(window.hwnd, effectiveThickness);
       }
 
       // Conversión a coordenadas absolutas de pantalla (una sola vez).
@@ -771,11 +821,10 @@ async function createPaintWindow(
           `strokes[${strokeIndex}].points`,
         ),
       );
-      if (options.skipToolSelection === false) {
-        await selectPencilTool(window.hwnd);
-      }
-      if (options.thickness) {
-        await setBrushThickness(window.hwnd, options.thickness);
+      await ensureDrawingToolActive(window.hwnd, canvas.elementName);
+      const effectiveThickness = resolveEffectiveThickness(options);
+      if (effectiveThickness) {
+        await setBrushThickness(window.hwnd, effectiveThickness);
       }
 
       // Conversión a coordenadas absolutas de pantalla (una sola vez).
