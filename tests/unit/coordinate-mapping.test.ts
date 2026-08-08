@@ -51,11 +51,18 @@ describe("infrastructure/win32/paint - coordinate mapping", () => {
   });
 
   describe("edge cases", () => {
-    it("handles negative logical coordinates (clamped)", () => {
+    it("maps the logical origin (0,0) to the client origin", () => {
       const canvas = makeCanvas({ width: 1920, height: 1080 });
       const points = [{ x: 0, y: 0 }];
       const client = canvasPointsToClientPoints(canvas, points, "test");
       assert.deepStrictEqual(client[0], { x: 100, y: 50 });
+    });
+
+    it("rejects negative logical coordinates instead of silently clamping", () => {
+      const canvas = makeCanvas({ width: 1920, height: 1080 });
+      assert.throws(() => {
+        canvasPointsToClientPoints(canvas, [{ x: -5, y: 10 }], "test");
+      }, /outside the resolved Paint canvas/);
     });
 
     it("handles zero-size canvas gracefully", () => {

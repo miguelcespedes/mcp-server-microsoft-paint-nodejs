@@ -2,12 +2,13 @@
   "name": "mcp-server-microsoft-paint-nodejs",
   "version": "1.0.0",
   "type": "module",
-  "main": "index.js",
+  "main": "dist/server.js",
   "scripts": {
     "dev": "tsx src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "node --test --test-concurrency=1 \"test/*.test.mjs\" \"test/unit/*.test.mjs\"",
+    "test": "node --import tsx/esm --test --test-concurrency=1 \"test/*.test.mjs\" \"test/unit/*.test.mjs\" \"tests/unit/*.test.ts\"",
+    "test:e2e": "node --import tsx/esm --test \"tests/e2e/*.test.ts\"",
     "inspect": "npx @modelcontextprotocol/inspector tsx src/server.ts"
   },
   "dependencies": {
