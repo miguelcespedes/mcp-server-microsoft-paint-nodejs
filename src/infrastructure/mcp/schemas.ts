@@ -19,17 +19,23 @@ export const pointSchema = z.object({
 });
 
 /**
- * Herramienta de dibujo: "brush" es la Brocha por defecto de Paint (no se
- * toca el toolbar); "pencil" selecciona el Lápiz en la barra de herramientas
- * antes de dibujar (trazo fino, ideal para contornos y órbitas).
+ * Herramienta de dibujo: "brush" (Brocha) o "pencil" (Lápiz, trazo fino,
+ * ideal para contornos y órbitas). Antes de CADA dibujo se verifica la
+ * herramienta realmente activa (puede haber quedado en "Selección" por una
+ * operación previa de recorte/selección) y se corrige si hace falta: Lápiz
+ * vía su atajo directo (tecla P), Brocha vía la KeyTip de la cinta
+ * (Alt suelto, luego B) — ambos mecanismos son confiables, pero si la
+ * herramienta activa no coincide con la pedida, esa corrección añade
+ * ~300-600ms a la llamada.
  */
 export const toolSchema = z
   .enum(["brush", "pencil"])
   .default("brush")
   .describe(
     "Herramienta de dibujo: 'brush' (Brocha, por defecto) o 'pencil' " +
-      "(Lápiz, trazo fino; se selecciona en la barra de herramientas antes " +
-      "de dibujar).",
+      "(Lápiz, trazo fino). Se verifica/corrige la herramienta activa antes " +
+      "de dibujar (vía atajo de teclado), añadiendo ~300-600ms si hacía " +
+      "falta cambiarla.",
   );
 
 /**
@@ -121,3 +127,20 @@ export const ellipseWidthSchema = positiveIntSchema("Ellipse width")
 export const ellipseHeightSchema = positiveIntSchema("Ellipse height")
   .default(180)
   .describe("Ellipse height as a positive integer. Default: 180.");
+
+/** Si verificar por captura de pantalla que el dibujo cambió píxeles realmente. */
+export const verifySchema = z
+  .boolean()
+  .default(true)
+  .describe(
+    "Si true (default), verifica con una captura de pantalla que el " +
+      "dibujo realmente cambió píxeles en el canvas (campo 'verified' en " +
+      "el resultado). Desactivar ahorra ~200-400ms por llamada; útil en " +
+      "lotes donde ya se confirmó que la automatización funciona.",
+  );
+
+/** Tamaño de lienzo {width, height} para redimensionar antes de dibujar. */
+export const canvasSizeSchema = z.object({
+  width: z.number().int().min(1).max(99999).describe("Ancho del lienzo en píxeles."),
+  height: z.number().int().min(1).max(99999).describe("Alto del lienzo en píxeles."),
+});

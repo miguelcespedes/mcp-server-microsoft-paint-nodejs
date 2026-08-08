@@ -54,7 +54,7 @@ export function registerPaintCanvas(
           const win = await paint.createWindow();
           const w = win.canvas.logicalWidth;
           const h = win.canvas.logicalHeight;
-          const margin = Math.min(w, h) * 0.1;
+          const margin = Math.round(Math.min(w, h) * 0.1);
 
           // Two literal diagonal lines forming an X
           const line1 = [

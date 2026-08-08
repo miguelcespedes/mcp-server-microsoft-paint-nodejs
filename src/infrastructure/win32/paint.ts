@@ -397,15 +397,6 @@ async function createNewPaintWindow(): Promise<{
 // Validaciones de entrada del motor
 // ─────────────────────────────────────────────────────────────────────────────
 
-function validateIntegerCoordinate(value: number, name: string): void {
-  if (!Number.isInteger(value)) {
-    throw new Error(`${name} debe ser un número entero (recibido: ${value}).`);
-  }
-  if (value < 0) {
-    throw new Error(`${name} no puede ser negativa (recibido: ${value}).`);
-  }
-}
-
 function validateStepDelayMs(stepDelayMs: number): void {
   if (!Number.isInteger(stepDelayMs) || stepDelayMs < 0 || stepDelayMs > 200) {
     throw new Error(
@@ -415,7 +406,16 @@ function validateStepDelayMs(stepDelayMs: number): void {
   }
 }
 
-/** Valida un punto {x, y} con enteros no negativos en la ruta dada. */
+/**
+ * Valida que un punto {x, y} sea estructuralmente correcto (objeto con
+ * enteros). NO valida rango — eso es responsabilidad exclusiva de
+ * ensurePointsInsideCanvas (canvas-resolver.ts), que corre más adelante en
+ * el mismo pipeline sobre los puntos ya mapeados a espacio de canvas y
+ * conoce los límites reales [0, logicalWidth)/[0, logicalHeight). Antes
+ * había un segundo chequeo aquí que solo rechazaba negativos (sin límite
+ * superior) con un Error genérico en español, que además corría ANTES y
+ * por lo tanto enmascaraba el error bien formado de canvas-resolver.ts.
+ */
 function validateCoordinatePair(point: unknown, path: string): void {
   if (
     point === null ||
@@ -435,8 +435,6 @@ function validateCoordinatePair(point: unknown, path: string): void {
         `(recibido: ${JSON.stringify(point)}).`,
     );
   }
-  validateIntegerCoordinate(p.x, `${path}.x`);
-  validateIntegerCoordinate(p.y, `${path}.y`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
