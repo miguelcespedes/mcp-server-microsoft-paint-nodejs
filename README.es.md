@@ -514,4 +514,6 @@ Quizá sea así como la curiosidad se vuelve acumulativa.
 
 ## Licencia
 
-Consulta la licencia del repositorio para más detalles.
+Este proyecto se distribuye bajo la [Licencia MIT](LICENSE), Copyright (c) 2026 Miguel Cespedes.
+
+Eres libre de usar, copiar, modificar, fusionar, publicar, distribuir, sublicenciar y/o vender copias del software, siempre que se conserve el aviso de copyright y de permiso.
