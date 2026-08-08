@@ -327,6 +327,7 @@ async function createPaintWindow(
   };
 
   let currentCanvas: PaintCanvas = resolvePaintCanvas(info.windowHandle);
+  let lastFitInvoked = false;
 
   function toCanvasInfo(canvas: PaintCanvas): PaintCanvasInfo {
     return {
@@ -406,6 +407,20 @@ async function createPaintWindow(
   }
 
   /**
+   * Restaura el zoom al 100% enviando Ctrl+0 (atajo estándar en Paint).
+   * Se invoca después de dibujar si refreshCanvas hizo fit-to-window.
+   */
+  async function resetZoomTo100(hwnd: bigint): Promise<void> {
+    try {
+      await proc.ensureWindowReady(hwnd, { maximize: true, foreground: true, logger });
+      proc.pressKeyCombo([win32.VK_CONTROL], win32.VK_0);
+      await proc.sleep(300);
+    } catch {
+      // Best-effort: si falla, el usuario puede ajustar manualmente.
+    }
+  }
+
+  /**
    * El mapeo lógico→cliente (canvasPointsToClientPoints) escala proporcional-
    * mente al rectángulo físico del elemento canvas. Eso es correcto solo si
    * ese rect es el lienzo COMPLETO a zoom uniforme. Si el lienzo es más grande
@@ -415,6 +430,7 @@ async function createPaintWindow(
    * window) vía UIA para dejar el estado determinista.
    */
   async function refreshCanvas(): Promise<PaintCanvas> {
+    lastFitInvoked = false;
     try {
       let discovered = await discoverPaintInventory(
         automationClient,
@@ -470,6 +486,7 @@ async function createPaintWindow(
             windowTitle: window.title,
             runtimeId: fitButton.runtimeId,
           });
+          lastFitInvoked = true;
           await proc.sleep(800);
           discovered = await discoverPaintInventory(
             automationClient,
@@ -577,6 +594,12 @@ async function createPaintWindow(
       // Arrastre único por todos los puntos.
       await proc.dragPolyline(screenPoints, options.stepDelayMs);
 
+      // P5: restaurar zoom al 100% si se hizo fit-to-window
+      if (lastFitInvoked) {
+        await resetZoomTo100(window.hwnd);
+        lastFitInvoked = false;
+      }
+
       return {
         success: true,
         processId: window.pid,
@@ -673,6 +696,12 @@ async function createPaintWindow(
       for (const points of screenStrokes) {
         totalPoints += points.length;
         await proc.dragPolyline(points, options.stepDelayMs);
+      }
+
+      // P5: restaurar zoom al 100% si se hizo fit-to-window
+      if (lastFitInvoked) {
+        await resetZoomTo100(window.hwnd);
+        lastFitInvoked = false;
       }
 
       return {
