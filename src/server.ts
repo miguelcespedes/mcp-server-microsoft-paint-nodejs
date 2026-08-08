@@ -17,6 +17,7 @@ import { createLogger } from "./infrastructure/logging/logger.js";
 import { createWin32PaintDriver } from "./infrastructure/win32/paint.js";
 import { AutomationClient } from "./infrastructure/windows/automation/automation-client.js";
 import { registerOperations } from "./infrastructure/mcp/registry.js";
+import { withRequestResponseTracing } from "./infrastructure/mcp/tracing.js";
 
 const server = new McpServer({
   name: "mcp-server-microsoft-paint-nodejs",
@@ -29,7 +30,10 @@ const logger = createLogger();
 const automationClient = new AutomationClient();
 const sessionStore = new PaintSessionStore(logger);
 const controller = new PaintController(sessionStore, automationClient, logger);
-registerOperations(server, paint, controller);
+// Traza request/response con callId de correlación para cada tool call
+// (ver infrastructure/mcp/tracing.ts). Desactivable con PAINT_MCP_TRACE=false.
+const tracedServer = withRequestResponseTracing(server);
+registerOperations(tracedServer, paint, controller);
 
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
