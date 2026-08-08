@@ -53,6 +53,8 @@ export interface DrawOptions {
    * Brocha, que dibuja con un arrastre normal).
    */
   skipToolSelection?: boolean;
+  /** Grosor de la brocha/lápiz en píxeles (1–50). Solo afecta si se selecciona la herramienta. */
+  thickness?: number;
 }
 
 /** Información de una ventana de Paint creada por el adaptador. */

@@ -40,6 +40,7 @@ import {
   pointSchema,
   relativeIntSchema,
   stepDelayMsSchema,
+  thicknessSchema,
   toolSchema,
 } from "../schemas.js";
 import type { PaintCanvasInfo, Point2D, Stroke } from "../../../domain/drawing.js";
@@ -778,6 +779,7 @@ export function registerPaintDraw(
           .default({ kind: "ellipse", x: 100, y: 120, width: 300, height: 180, stepCount: 72 }),
         generators: generatorListSchema.optional(),
         stepDelayMs: stepDelayMsSchema,
+        thickness: thicknessSchema.optional().describe("Grosor de la brocha/lápiz en píxeles (1–50)."),
         origin: pointSchema.optional().describe("Origen global (offset) aplicado a todas las coordenadas de los generadores. Default: {0,0}."),
         canvas: z
           .object({
@@ -803,6 +805,7 @@ export function registerPaintDraw(
         const drawOptions = {
           stepDelayMs: args.stepDelayMs,
           skipToolSelection: args.tool === "pencil" ? false : undefined,
+          thickness: args.thickness,
         };
 
         if (args.mode === "freehand") {

@@ -58,6 +58,14 @@ export const stepDelayMsSchema = z
       "por defecto 10). Más bajo = más rápido.",
   );
 
+/** Grosor de la brocha/lápiz en píxeles (1–50). */
+export const thicknessSchema = z
+  .number()
+  .int()
+  .min(1)
+  .max(50)
+  .describe("Grosor de la brocha o lápiz en píxeles (1–50).");
+
 export const inventoryMaxDepthSchema = z
   .number()
   .int()

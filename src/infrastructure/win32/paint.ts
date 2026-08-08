@@ -176,6 +176,74 @@ async function selectPencilTool(hwnd: bigint): Promise<void> {
   await proc.sleep(300);
 }
 
+/**
+ * Establece el grosor de la brocha/lápiz en Paint.
+ * Busca el ComboBox de tamaño en la barra de herramientas y selecciona el valor.
+ * Solo funciona con la ventana maximizada y el grupo "Herramientas" expandido.
+ */
+async function setBrushThickness(hwnd: bigint, thickness: number): Promise<void> {
+  const { AutomationClient } = await import("../windows/automation/automation-client.js");
+  const automationClient = new AutomationClient();
+  
+  // Try to find and set the size combo box via UIA
+  const payload = {
+    windowHandleHex: `0x${hwnd.toString(16).padStart(16, "0")}`,
+    maxDepth: 8,
+    includeBoundingRectangles: false,
+    scope: "window" as const,
+  };
+
+  try {
+    const result = await automationClient.inventory(payload);
+    const sizeCombo = result.elements.find(
+      (el: { automationId?: string; name?: string; runtimeId?: number[] }) => 
+        el.automationId === "SizeComboBox" || 
+        el.name?.toLowerCase().includes("tamaño") ||
+        el.name?.toLowerCase().includes("size")
+    );
+
+    if (sizeCombo && sizeCombo.runtimeId) {
+      // Try to expand and select
+      await automationClient.invoke({
+        windowHandleHex: `0x${hwnd.toString(16).padStart(16, "0")}`,
+        runtimeId: sizeCombo.runtimeId,
+      });
+      await proc.sleep(200);
+
+      // Try to find the size item
+      const result2 = await automationClient.inventory(payload);
+      const sizeItem = result2.elements.find(
+        (el: { name?: string; runtimeId?: number[] }) => 
+          el.name?.includes(`${thickness} px`) || el.name?.includes(`${thickness}px`)
+      );
+
+      if (sizeItem && sizeItem.runtimeId) {
+        await automationClient.invoke({
+          windowHandleHex: `0x${hwnd.toString(16).padStart(16, "0")}`,
+          runtimeId: sizeItem.runtimeId,
+        });
+        await proc.sleep(200);
+        return;
+      }
+    }
+  } catch {
+    // Fallback: try keyboard shortcut (Ctrl++ / Ctrl+-) but not reliable
+  }
+
+  // Fallback: click at approximate position for size dropdown
+  // This is a rough approximation - the size dropdown is typically near the brush tool
+  const SIZE_DROPDOWN = { x: 480, y: 82 }; // Approximate position
+  const dropdownScreen = proc.clientToScreen(hwnd, SIZE_DROPDOWN);
+  await proc.clickAt(dropdownScreen);
+  await proc.sleep(300);
+
+  // Try to click the size item (approximate)
+  const SIZE_ITEM_Y = 82 + thickness * 20; // Rough approximation
+  const itemScreen = proc.clientToScreen(hwnd, { x: 480, y: SIZE_ITEM_Y });
+  await proc.clickAt(itemScreen);
+  await proc.sleep(200);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Lanzar Paint
 // ─────────────────────────────────────────────────────────────────────────────
@@ -585,6 +653,9 @@ async function createPaintWindow(
       if (options.skipToolSelection === false) {
         await selectPencilTool(window.hwnd);
       }
+      if (options.thickness) {
+        await setBrushThickness(window.hwnd, options.thickness);
+      }
 
       // Conversión a coordenadas absolutas de pantalla (una sola vez).
       const screenPoints = clientPoints.map((point) =>
@@ -684,6 +755,9 @@ async function createPaintWindow(
       );
       if (options.skipToolSelection === false) {
         await selectPencilTool(window.hwnd);
+      }
+      if (options.thickness) {
+        await setBrushThickness(window.hwnd, options.thickness);
       }
 
       // Conversión a coordenadas absolutas de pantalla (una sola vez).
