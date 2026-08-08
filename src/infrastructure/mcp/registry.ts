@@ -19,6 +19,7 @@ import { registerPaintDebugUi } from "./operations/paint-debug-ui.operation.js";
 import { registerPaintDraw } from "./operations/paint-draw.operation.js";
 import { registerPaintDraw3d } from "./operations/paint-draw-3d.operation.js";
 import { registerPaintEdit } from "./operations/paint-edit.operation.js";
+import { registerPaintNapkin } from "./operations/paint-napkin.operation.js";
 
 export function registerOperations(
   server: McpServer,
@@ -27,6 +28,7 @@ export function registerOperations(
 ): void {
   registerPaintDraw(server, paint, controller);
   registerPaintDraw3d(server, paint, controller);
+  registerPaintNapkin(server, paint, controller);
   registerPaintEdit(server, paint, controller);
   registerPaintCanvas(server, paint, controller);
   registerPaintDebugUi(server, controller);
