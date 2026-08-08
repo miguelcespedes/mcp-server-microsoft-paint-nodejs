@@ -1,4 +1,4 @@
-# MCP Server para Microsoft Paint
+# Servidor MCP para Microsoft Paint en Node.js
 
 [English](README.md) · [Español](README.es.md)
 
