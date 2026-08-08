@@ -2,6 +2,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { PaintPort } from "../../../domain/drawing.js";
 import type { PaintController } from "../../../paint/paint-controller.js";
+import { captureRegionHasInk } from "../../win32/screenshot.js";
 import {
   boundingBox,
   fitStrokes,
@@ -340,7 +341,7 @@ const generatorSchema = z.discriminatedUnion("kind", [
     (grid) => grid.cols * grid.rows <= 400,
     {
       message:
-        "grid demasiado grande: cols Ã— rows debe ser â‰¤ 400 (el dibujo " +
+        "grid demasiado grande: cols × rows debe ser ≤ 400 (el dibujo " +
         "queda limitado a 500 trazos por llamada).",
       path: ["cols"],
     },
@@ -385,7 +386,7 @@ const generatorSchema = z.discriminatedUnion("kind", [
     },
     {
       message:
-        "dotsAlongPath generarÃ­a mÃ¡s de 500 cÃ­rculos (el dibujo queda " +
+        "dotsAlongPath generaría más de 500 círculos (el dibujo queda " +
         "limitado a 500 trazos por llamada). Aumenta 'spacing' o acorta el " +
         "sendero.",
       path: ["spacing"],
@@ -541,7 +542,7 @@ const generatorSchema = z.discriminatedUnion("kind", [
       ),
     {
       message:
-        "wireframe: los Ã­ndices de 'edges' deben ser menores que la " +
+        "wireframe: los índices de 'edges' deben ser menores que la " +
         "cantidad de 'vertices'.",
       path: ["edges"],
     },
@@ -595,6 +596,31 @@ function generatorToPoints(generator: z.infer<typeof generatorSchema>) {
       // are handled in generatorToStrokes.
       return [];
   }
+}
+
+interface StrokeProvenanceEntry {
+  generatorIndex: number;
+  kind: string;
+}
+
+/**
+ * Como generatorToStrokes(), pero conserva de qué generador (índice + kind)
+ * vino cada stroke resultante. Sin esto, un error de "strokes[N] fuera de
+ * los límites del canvas" no dice qué generador de la llamada lo causó
+ * cuando se combinan varios en un solo paint_draw.
+ */
+function buildStrokesWithProvenance(
+  generators: z.infer<typeof generatorSchema>[],
+): { allStrokes: Point2D[][]; provenance: StrokeProvenanceEntry[] } {
+  const allStrokes: Point2D[][] = [];
+  const provenance: StrokeProvenanceEntry[] = [];
+  generators.forEach((generator, generatorIndex) => {
+    for (const points of generatorToStrokes(generator)) {
+      allStrokes.push(points);
+      provenance.push({ generatorIndex, kind: generator.kind });
+    }
+  });
+  return { allStrokes, provenance };
 }
 
 function generatorToStrokes(generator: z.infer<typeof generatorSchema>) {
@@ -793,6 +819,7 @@ export function registerPaintDraw(
     async (args) => {
       logToolStarted("paint_draw", args);
       let outcome: "success" | "error" = "error";
+      let strokeProvenance: StrokeProvenanceEntry[] = [];
       try {
         let window = await paint.createWindow();
 
@@ -866,7 +893,7 @@ export function registerPaintDraw(
 
         // P2: auto-resize canvas to match content aspect ratio when using fit
         if ((args.fit === "contain" || args.fit === "fill") && offsetGenerators.length > 0) {
-          const allStrokes = offsetGenerators.flatMap((g) => generatorToStrokes(g));
+          const { allStrokes } = buildStrokesWithProvenance(offsetGenerators);
           const contentBox = boundingBox(allStrokes);
           if (contentBox) {
             const contentWidth = contentBox.maxX - contentBox.minX;
@@ -894,7 +921,8 @@ export function registerPaintDraw(
           }
         }
 
-        const allStrokes = offsetGenerators.flatMap((generator) => generatorToStrokes(generator));
+        const { allStrokes, provenance } = buildStrokesWithProvenance(offsetGenerators);
+        strokeProvenance = provenance;
         const strokes = fitStrokesToCanvas(
           allStrokes.map((points) => ({ points })),
           args.fit,
@@ -904,6 +932,14 @@ export function registerPaintDraw(
           ? await window.drawPolyline(strokes[0].points, drawOptions)
           : await window.drawFreehand(strokes, drawOptions);
         outcome = "success";
+
+        const verification = await captureRegionHasInk({
+          left: result.canvas.screenOrigin.x,
+          top: result.canvas.screenOrigin.y,
+          width: result.canvas.width,
+          height: result.canvas.height,
+        });
+
         return {
           content: [
             {
@@ -911,15 +947,33 @@ export function registerPaintDraw(
               text:
                 `Generator drawing completed with ${generators.length} generator(s) on ` +
                 `${result.canvas.logicalWidth}x${result.canvas.logicalHeight} canvas ` +
-                `(${formatCanvasBounds(strokes)}) in "${result.windowTitle}".`,
+                `(${formatCanvasBounds(strokes)}) in "${result.windowTitle}". ` +
+                (verification.hasInk === null
+                  ? `Pixel verification unavailable (${verification.reason}).`
+                  : verification.hasInk
+                    ? "Pixel verification confirmed ink on canvas."
+                    : "WARNING: pixel verification found no ink on canvas despite success."),
             },
           ],
           structuredContent: {
             ...result,
             generators,
+            verified: verification.hasInk,
+            verificationDetail: verification,
           },
         };
       } catch (error: unknown) {
+        if (error instanceof Error) {
+          const match = /strokes\[(\d+)\]/.exec(error.message);
+          if (match) {
+            const strokeIndex = Number(match[1]);
+            const entry = strokeProvenance[strokeIndex];
+            if (entry) {
+              error.message +=
+                ` (proviene del generador #${entry.generatorIndex}, tipo: "${entry.kind}")`;
+            }
+          }
+        }
         return toolErrorResult("paint_draw", error);
       } finally {
         logToolFinished("paint_draw", outcome);

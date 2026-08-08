@@ -5,7 +5,8 @@ import type { PaintController } from "../../../paint/paint-controller.js";
 import { notifyOperationFinished } from "../../win32/process.js";
 import { toolErrorResult } from "../errors.js";
 import { logToolFinished, logToolStarted } from "../tool-logging.js";
-import { boundingBox, rectanglePolyline } from "../../../domain/figures.js";
+import { boundingBox } from "../../../domain/figures.js";
+import { captureRegionHasInk } from "../../win32/screenshot.js";
 
 const canvasDimensionSchema = z
   .number()
@@ -54,24 +55,45 @@ export function registerPaintCanvas(
           const w = win.canvas.logicalWidth;
           const h = win.canvas.logicalHeight;
           const margin = Math.min(w, h) * 0.1;
-          
-          // Two diagonal lines forming an X
-          const line1 = rectanglePolyline({ x: margin, y: margin, width: w - 2 * margin, height: h - 2 * margin });
+
+          // Two literal diagonal lines forming an X
+          const line1 = [
+            { x: margin, y: margin },
+            { x: w - margin, y: h - margin },
+          ];
           const line2 = [
             { x: w - margin, y: margin },
             { x: margin, y: h - margin },
           ];
-          
+
           const drawOptions = { stepDelayMs: 2, skipToolSelection: true };
           for (const stroke of [line1, line2]) {
             await win.drawPolyline(stroke, drawOptions);
           }
-          
+
           const strokes = [line1, line2];
+          const canvasBounds = boundingBox(strokes) ?? null;
+          const expectedBounds = { minX: margin, minY: margin, maxX: w - margin, maxY: h - margin };
+          const tolerance = Math.max(w, h) * 0.02;
+          const matchesExpectedBounds =
+            canvasBounds !== null &&
+            Math.abs(canvasBounds.minX - expectedBounds.minX) <= tolerance &&
+            Math.abs(canvasBounds.minY - expectedBounds.minY) <= tolerance &&
+            Math.abs(canvasBounds.maxX - expectedBounds.maxX) <= tolerance &&
+            Math.abs(canvasBounds.maxY - expectedBounds.maxY) <= tolerance;
+
+          const pixelCheck = await captureRegionHasInk({
+            left: win.canvas.screenOrigin.x,
+            top: win.canvas.screenOrigin.y,
+            width: win.canvas.width,
+            height: win.canvas.height,
+          });
+
           verification = {
-            canvasBounds: boundingBox(strokes) ?? null,
-            expectedBounds: { minX: margin, minY: margin, maxX: w - margin, maxY: h - margin },
-            matches: true,
+            canvasBounds,
+            expectedBounds,
+            matches: matchesExpectedBounds && pixelCheck.hasInk !== false,
+            pixelCheck,
           };
         }
         
