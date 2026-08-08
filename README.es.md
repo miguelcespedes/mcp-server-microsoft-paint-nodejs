@@ -387,7 +387,7 @@ Estas descripciones se validan antes de alcanzar la capa de dibujo y se transfor
 
 La referencia completa del DSL se encuentra en:
 
-**[`docs/dsl-paint-draw.md`](docs/dsl-paint-draw.md)**
+**[`docs/dsl-paint-draw.es.md`](docs/dsl-paint-draw.es.md)**
 
 ---
 
@@ -399,11 +399,11 @@ Esa investigación terminó siendo suficientemente útil como para documentarla 
 
 Si te interesa comprender cómo una aplicación moderna de Windows puede inspeccionarse y automatizarse a través de su modelo de accesibilidad, consulta:
 
-**[`docs/windows-automation-uia.md`](docs/windows-automation-uia.md)**
+**[`docs/windows-automation-uia.es.md`](docs/windows-automation-uia.es.md)**
 
 También existe un recorrido práctico utilizando PowerShell:
 
-**[`docs/tutorial-paint-powershell.md`](docs/tutorial-paint-powershell.md)**
+**[`docs/tutorial-paint-powershell.es.md`](docs/tutorial-paint-powershell.es.md)**
 
 Estos documentos preservan la investigación de ingeniería que existe detrás de la implementación MCP, en lugar de esconderla detrás de la API final.
 
@@ -478,9 +478,9 @@ Esa es parte de la razón por la que existe este repositorio.
 
 | Documento                                                                | Propósito                                                   |
 | ------------------------------------------------------------------------ | ----------------------------------------------------------- |
-| [`docs/dsl-paint-draw.md`](docs/dsl-paint-draw.md)                       | DSL matemático y referencia de generadores                  |
-| [`docs/windows-automation-uia.md`](docs/windows-automation-uia.md)       | Investigación de Paint mediante Windows UI Automation       |
-| [`docs/tutorial-paint-powershell.md`](docs/tutorial-paint-powershell.md) | Tutorial práctico de automatización de Paint con PowerShell |
+| [`docs/dsl-paint-draw.es.md`](docs/dsl-paint-draw.es.md)                       | DSL matemático y referencia de generadores                  |
+| [`docs/windows-automation-uia.es.md`](docs/windows-automation-uia.es.md)       | Investigación de Paint mediante Windows UI Automation       |
+| [`docs/tutorial-paint-powershell.es.md`](docs/tutorial-paint-powershell.es.md) | Tutorial práctico de automatización de Paint con PowerShell |
 
 Los detalles adicionales de arquitectura, ejemplos, pruebas y decisiones de implementación pueden ir trasladándose progresivamente a esta sección a medida que el experimento evolucione.
 

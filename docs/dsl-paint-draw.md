@@ -1,220 +1,254 @@
-# El DSL de `paint_draw`: generadores matemáticos y sólidos 3D
+# The drawing DSL: `paint_draw` (2D) and `paint_draw_3d` (solids)
 
-Este documento explica cómo funciona el lenguaje de dibujo de la tool MCP
-`paint_draw`: desde el JSON que recibe hasta los movimientos de mouse que se
-ejecutan en Paint. La matemática es pura y vive en dos módulos del dominio:
+This document explains the drawing language of the MCP tools `paint_draw`
+(2D) and `paint_draw_3d` (3D solids/meshes): from the JSON they receive to
+the mouse movements executed in Paint. The math is pure and lives in two
+domain modules:
 
-- `src/domain/figures.ts` — figuras 2D y composición.
-- `src/domain/solids.ts` — sólidos 3D proyectados a alambre.
+- `src/domain/figures.ts` — 2D figures and composition.
+- `src/domain/solids.ts` — 3D solids projected to wireframe.
 
-Las operaciones MCP (`src/infrastructure/mcp/operations/paint-draw.operation.ts`)
-traducen el DSL a **strokes** (polilíneas de puntos) y delegan el dibujo al
-puerto `PaintPort` (adaptador Win32 → `SetCursorPos` + `mouse_event`).
+The MCP operations translate the DSL into **strokes** (polylines of points)
+and delegate drawing to the `PaintPort` (Win32 adapter → `SendInput`):
+
+- `src/infrastructure/mcp/operations/paint-draw.operation.ts` — 2D.
+- `src/infrastructure/mcp/operations/paint-draw-3d.operation.ts` — 3D.
+
+> The `paint_draw` tool does not accept 3D generators (solid/torus/torusKnot/…):
+> use `paint_draw_3d` for those.
 
 ---
 
-## 1. Anatomía de la llamada
+## 1. Anatomy of a call
 
 ```jsonc
 {
   "mode": "generator",          // "freehand" | "generator"
   "tool": "brush",              // "brush" | "pencil"
   "fit": "contain",             // "none" | "contain" | "fill"
-  "stepDelayMs": 10,            // 0–200 ms entre movimientos del mouse
-  "generators": [ /* 1–100 generadores */ ],
-  // o bien, para modo "freehand":
-  // "strokes": [ { "points": [{x,y}, ...] } ]  // 1–500 trazos
+  "stepDelayMs": 10,            // 0–200 ms between mouse movements
+  "thickness": 4,               // 1–50 px (optional; brush/pencil width)
+  "verify": true,               // screenshot-based verification
+  "canvas": { "width": 1920, "height": 1080 },  // optional: resize canvas before drawing
+  "generators": [ /* 1–100 generators */ ],
+  // or, for "freehand" mode:
+  // "strokes": [ { "points": [{x,y}, ...] } ]  // 1–500 strokes
 }
 ```
 
-**Pipeline completo** (modo generator):
+**Full pipeline** (generator mode):
 
 ```
 generators (DSL)
    │  generatorToStrokes() / generatorToPoints()   (paint-draw.operation.ts)
    ▼
-Point2D[][]  (strokes: listas de puntos del lienzo)
-   │  fitStrokesToCanvas() → fitStrokes()           (figures.ts)
+Point2D[][]  (strokes: lists of canvas points)
+   │  fitStrokesToCanvas() → fitStrokes()           (draw-shared.ts → figures.ts)
    ▼
-strokes escalados/centrados al lienzo lógico
+strokes scaled/centered to the logical canvas
    │  drawFreehand()/drawPolyline()                  (Win32 paint.ts)
    ▼
 canvasPointsToClientPoints → clientToScreen
    │  dragPolyline()                                 (process.ts)
    ▼
-SetCursorPos + mouse_event(LEFTDOWN … LEFTUP)        (user32.dll)
+SendInput: mouseMoveAbsolute + LEFTDOWN/LEFTUP      (user32.dll)
 ```
 
-Regla central: **cada arista/polilínea es un stroke = un arrastre del mouse**.
-Los límites por llamada son 500 trazos y 1000 puntos por trazo.
+Central rule: **each edge/polyline is a stroke = one mouse drag**.
+Per-call limits are 500 strokes and 1000 points per stroke.
 
-## 2. Generadores 2D
+> The whole gesture is injected through `SendInput` (absolute mouse movement
+> + button events), **not** with `SetCursorPos` + `mouse_event`: mixing both
+> mechanisms makes modern Paint (WinUI3/XAML) fail to sync the mouse-down
+> with the position and it does not interpret the stroke.
 
-Todos devuelven una polilínea (un solo stroke) salvo `disk`, `grid` y
-`dotsAlongPath`, que devuelven varios. Las coordenadas son del lienzo lógico
-(el espacio de diseño; `fit` las re-mapea si se pide).
+## 2. 2D generators
 
-| kind | Parámetros | Matemática |
+All return a single polyline (one stroke) except `disk`, `grid` and
+`dotsAlongPath`, which return several. Coordinates belong to the logical
+canvas (the design space; `fit` remaps them if requested).
+
+| kind | Parameters | Math |
 |---|---|---|
-| `ellipse` | `x, y, width, height, stepCount=72` | Elipse paramétrica: `cx=x+w/2`, `rx=w/2`; 73 puntos (cierra). |
-| `circle` | `cx, cy, radius, stepCount=72` | `ellipse` con `x=cx-r, w=2r`. |
-| `arc` | `cx, cy, radius, startDeg, endDeg, stepDeg=4` | Arco en grados; `steps = ceil(|end-start|/stepDeg)`, interpolación angular. |
-| `rectangle` | `x, y, width, height` | 5 puntos (esquinas + cierre). |
-| `roundedRectangle` | `x, y, width, height, radius=24, stepDeg=12` | 4 lados + 4 cuartos de arco de radio `min(radius, min(w,h)/2)`. |
-| `regularPolygon` | `cx, cy, radius, sides (3–64), rotationDeg=-90` | Vértices en el círculo; `rotationDeg` orienta (por defecto un vértice arriba). |
-| `starPolygon` | `cx, cy, outerRadius, innerRadius, points (3–32), rotationDeg=-90` | 2·points vértices alternando radio exterior/interior. |
-| `polyline` | `points` (2–1000) | Se dibuja tal cual: la polilínea libre del DSL. |
-| `logarithmicSpiral` | `cx, cy, growth=1.1, turns=6, angleStep=0.05, scale=7` | `r = scale·growth^θ` desde el centro hacia afuera. |
+| `ellipse` | `x, y, width, height, stepCount=72` | Parametric ellipse: `cx=x+w/2`, `rx=w/2`; 73 points (closes). |
+| `circle` | `cx, cy, radius, stepCount=72` | `ellipse` with `x=cx-r, w=2r`. |
+| `arc` | `cx, cy, radius, startDeg, endDeg, stepDeg=4` | Arc in degrees; `steps = ceil(|end-start|/stepDeg)`, angular interpolation. |
+| `rectangle` | `x, y, width, height` | 5 points (corners + closure). |
+| `roundedRectangle` | `x, y, width, height, radius=24, stepDeg=12` | 4 sides + 4 quarter arcs of radius `min(radius, min(w,h)/2)`. |
+| `regularPolygon` | `cx, cy, radius, sides (3–64), rotationDeg=-90` | Vertices on the circle; `rotationDeg` orients (by default one vertex on top). |
+| `starPolygon` | `cx, cy, outerRadius, innerRadius, points (3–32), rotationDeg=-90` | 2·points vertices alternating outer/inner radius. |
+| `polyline` | `points` (2–1000) | Drawn as-is: the DSL's free polyline. |
+| `logarithmicSpiral` | `cx, cy, growth=1.1, turns=6, angleStep=0.05, scale=7` | `r = scale·growth^θ` from the center outward. |
 
-### Repetidores
+### Repeaters
 
-| kind | Parámetros | Comportamiento |
+| kind | Parameters | Behavior |
 |---|---|---|
-| `grid` | `x, y, width, height, cols (≤50), rows (≤50), shape (circle/disk/rectangle/ellipse), radius/itemWidth/itemHeight, stepCount` | Mosaico: repite la figura en una retícula `cols×rows` centrada en celdas de `width/cols × height/rows`. Un stroke por ítem (los discos se expanden en filas de relleno). Validación: `cols·rows ≤ 400`. |
-| `dotsAlongPath` | `path (2–1000 pts), radius=3, spacing=16, stepCount` | Círculos espaciados `spacing` px a lo largo de un sendero (interpolación por segmentos; el primero cae a `spacing` del inicio). Validación: `floor(length/spacing) ≤ 500` círculos. |
+| `grid` | `x, y, width, height, cols (≤50), rows (≤50), shape (circle/disk/rectangle/ellipse), radius/itemWidth/itemHeight, stepCount` | Mosaic: repeats the figure on a `cols×rows` grid centered in cells of `width/cols × height/rows`. One stroke per item (disks expand into fill rows). Validation: `cols·rows ≤ 400`. |
+| `dotsAlongPath` | `path (2–1000 pts), radius=3, spacing=16, stepCount` | Circles spaced `spacing` px along a path (segment interpolation; the first lands `spacing` from the start). Validation: `floor(length/spacing) ≤ 500` circles. |
 
-## 3. Sólidos 3D proyectados a alambre
+## 3. 3D solids projected to wireframe (`paint_draw_3d`)
 
-Se definen **centrados en el origen** (coordenadas negativas incluidas), se
-rotan en el orden **X → Y → Z** y se proyectan a 2D. Por eso se recomienda
-`fit: "contain"`: escala y centra el modelo en el lienzo sin calcular a mano.
+This section describes the **`paint_draw_3d`** tool (operation
+`paint-draw-3d.operation.ts`), which shares `paint_draw`'s pipeline (`fit`,
+`canvas`, screenshot verification) but with its own generators: `solid`,
+`torus`, `torusKnot`, `revolution` and `wireframe`. The schema accepts
+`generators` (1–100) with those kinds and the same common parameters (`tool`,
+`fit`, `canvas`, `stepDelayMs`).
+
+Models are defined **centered at the origin** (negative coordinates
+included), rotated in **X → Y → Z** order and projected to 2D. That is why
+`fit: "contain"` is recommended: it scales and centers the model on the
+canvas with no manual math.
 
 ```
-vértices 3D → rotate3D (rotX→rotY→rotZ) → projectPoint → strokes 2D
-   proyección: ortho (f=1) o perspective (f = d / max(d - z, 0.1))
-   cada arista = stroke de 2 puntos
+3D vertices → rotate3D (rotX→rotY→rotZ) → projectPoint → 2D strokes
+   projection: ortho (f=1) or perspective (f = d / max(d - z, 0.1))
+   each edge = a 2-point stroke
 ```
 
-| Parámetro | Significado |
+| Parameter | Meaning |
 |---|---|
-| `rotX / rotY / rotZ` | Grados, orden X→Y→Z (por defecto −20 / 25 / 0). |
-| `projection` | `ortho` (sin perspectiva) o `perspective` (cámara a `perspectiveDistance` del origen; lo cercano se agranda). |
-| `perspectiveDistance` | Distancia de cámara en unidades del modelo (por defecto 3). |
-| `size` | Escala final en px (por defecto 120). |
+| `rotX / rotY / rotZ` | Degrees, X→Y→Z order (default −20 / 25 / 0). |
+| `projection` | `ortho` (no perspective) or `perspective` (camera at `perspectiveDistance` from the origin; close objects enlarge). |
+| `perspectiveDistance` | Camera distance in model units (default 3). |
+| `size` | Final scale in px (default 120). |
 
-### 3.1 `solid` — poliedros regulares y compuestos
+### 3.1 `solid` — regular and compound polyhedra
 
-El `kind: "solid"` usa `solidMesh()` + `projectMesh()`: **una arista = un
-stroke de 2 puntos**.
+The `kind: "solid"` uses `solidMesh()` + `projectMesh()`: **one edge = one
+2-point stroke**.
 
-| solid | Construcción | Vértices / aristas |
+| solid | Construction | Vertices / edges |
 |---|---|---|
-| `tetrahedron` | 4 vértices alternados (±1,±1,±1), `allPairs(4)` | 4 / 6 |
-| `cube` | 8 vértices (±1)³; aristas entre parejas que difieren en 1 coordenada | 8 / 12 |
-| `octahedron` | 6 vértices en los ejes; `edgesAtDistance(√2)` | 6 / 12 |
-| `icosahedron` | 12 vértices con la proporción áurea PHI; aristas a distancia 2 | 12 / 30 |
-| `dodecahedron` | 8 vértices (±1)³ + 12 de los rectángulos áureos; distancia `2/PHI` | 20 / 30 |
-| `greatIcosahedron` | Comparte el esqueleto del icosaedro (30 aristas exactas) | 12 / 30 |
-| `starOctangula` | Dos tetraedros cruzados (compuesto regular) | 8 / 12 |
-| `tesseract` | Hipercubo (±1)⁴ → proyección con perspectiva en w (cámara 2.5) → 3D | 16 / 32 |
+| `tetrahedron` | 4 alternating vertices (±1,±1,±1), `allPairs(4)` | 4 / 6 |
+| `cube` | 8 vertices (±1)³; edges between pairs differing in 1 coordinate | 8 / 12 |
+| `octahedron` | 6 axis vertices; `edgesAtDistance(√2)` | 6 / 12 |
+| `icosahedron` | 12 vertices with golden ratio PHI; edges at distance 2 | 12 / 30 |
+| `dodecahedron` | 8 vertices (±1)³ + 12 from the golden rectangles; distance `2/PHI` | 20 / 30 |
+| `greatIcosahedron` | Shares the icosahedron's skeleton (30 exact edges) | 12 / 30 |
+| `starOctangula` | Two crossed tetrahedra (regular compound) | 8 / 12 |
+| `tesseract` | Hypercube (±1)⁴ → perspective projection in w (camera 2.5) → 3D | 16 / 32 |
 
-`edgesAtDistance()` es la joya del módulo: genera la malla buscando pares de
-vértices que distan exactamente la arista del sólido — los poliedros
-platónicos se definen solo por sus vértices.
+`edgesAtDistance()` is the module's gem: it builds the mesh by looking for
+vertex pairs exactly one edge apart — the Platonic solids are defined by
+their vertices alone.
 
-Opcional para `greatIcosahedron`: `starFaces: true` añade las **20 caras
-pentagrama** que se cruzan (`greatIcosahedronFaces()`: cada cara triangular
-del icosaedro se expande con los terceros vértices de las caras vecinas en el
-ciclo a→x→b→y→c). Es una aproximación visual; el esqueleto de 30 aristas es
-el sólido exacto.
+Optional for `greatIcosahedron`: `starFaces: true` adds the **20 crossing
+pentagram faces** (`greatIcosahedronFaces()`: each triangular face of the
+icosahedron is expanded with the third vertices of neighboring faces in the
+a→x→b→y→c cycle). It is a visual approximation; the 30-edge skeleton is the
+exact solid.
 
 ### 3.2 `torus`
 
-`torusPolygons()`: paramétrico con anillos de latitud y meridianos.
-`rings × segments` — cada anillo y cada meridiano es un stroke cerrado.
+`torusPolygons()`: parametric with latitude rings and meridians.
+`rings × segments` — each ring and each meridian is a closed stroke.
 
-| Parámetro | Significado |
+| Parameter | Meaning |
 |---|---|
-| `majorRadius` | Radio del agujero al centro del tubo. |
-| `tubeRadius` | Radio del tubo. |
-| `segments` (6–48) | Puntos por anillo (meridianos). |
-| `rings` (3–24) | Anillos de latitud. |
+| `majorRadius` | Radius from the hole to the tube center. |
+| `tubeRadius` | Tube radius. |
+| `segments` (6–48) | Points per ring (meridians). |
+| `rings` (3–24) | Latitude rings. |
 
 ### 3.3 `torusKnot`
 
-`torusKnotPoints()`: curva paramétrica enlazada **sobre** la superficie de un
-toro (`p` vueltas alrededor del agujero, `q` alrededor del tubo):
+`torusKnotPoints()`: a linked parametric curve **on** a torus surface
+(`p` turns around the hole, `q` around the tube):
 
 ```
 r(t) = radius + tubeRadius·cos(q·t)
 x = r·cos(p·t)  y = r·sin(p·t)  z = tubeRadius·sin(q·t)
 ```
 
-Devuelve **una única polilínea** (1 stroke, `steps` 50–1000). `(p, q)` deben
-ser coprimos para que el nudo no se repita (p. ej. 2,3 → trébol).
+Returns **a single polyline** (1 stroke, `steps` 50–1000). `(p, q)` must be
+coprime so the knot does not repeat (e.g. 2,3 → trefoil).
 
-### 3.4 `revolution` — superficies de revolución
+### 3.4 `revolution` — surfaces of revolution
 
-`revolutionPolygons()`: el **perfil** es una polilínea 2D en el plano donde
-`x = distancia al eje` y `y = altura` (el "jarrón"). Se rota alrededor del
-**eje Y** en `segments` (4–64) posiciones:
+`revolutionPolygons()`: the **profile** is a 2D polyline in the plane where
+`x = distance to the axis` and `y = height` (the "vase"). It is rotated
+around the **Y axis** in `segments` (4–64) positions:
 
 ```
 ring(seg) = { x = profile.x·cos(u), y = profile.y, z = profile.x·sin(u) }
 ```
 
-Devuelve un anillo por cada punto del perfil + un meridiano por segmento
-(anillos y meridianos son strokes cerrados). Con un perfil `[{x:60,y:-80},
-{x:30,y:0}, {x:80,y:120}]` obtienes un jarrón.
+Returns one ring per profile point + one meridian per segment (rings and
+meridians are closed strokes). With a profile like `[{x:60,y:-80},
+{x:30,y:0}, {x:80,y:120}]` you get a vase.
 
-### 3.5 `wireframe` — malla genérica
+### 3.5 `wireframe` — generic mesh
 
-`wireframeStrokes()`: pasas los vértices 3D y las aristas explícitas
-(`{vertices: [{x,y,z}…], edges: [[i,j]…]}`), y se aplica la misma rotación +
-proyección. Es el escape hatch: cualquier malla customizada (un edificio, una
-molécula, un poliedro raro) sin añadir código al DSL. Límites: 256 vértices,
-500 aristas.
+`wireframeStrokes()`: you pass the 3D vertices and the explicit edges
+(`{vertices: [{x,y,z}…], edges: [[i,j]…]}`), and the same rotation +
+projection is applied. It is the escape hatch: any custom mesh (a building,
+a molecule, a rare polyhedron) without adding code to the DSL. Limits: 256
+vertices, 500 edges.
 
-## 4. `fit`: contener o rellenar el lienzo
+## 4. `fit`: contain or fill the canvas
 
-`fitStrokes()` (`figures.ts`) re-mapea los strokes al lienzo lógico:
+`fitStrokes()` (`figures.ts`) remaps the strokes onto the logical canvas:
 
-1. Calcula el **bounding box conjunto** de todos los strokes.
-2. Escala: `contain` = `min(anchoDisp/w, altoDisp/h)` (preserva proporción);
-   `fill` = escala independiente por eje (estira).
-3. Centra en el lienzo.
-4. `margin` (5% por defecto) reserva aire alrededor del dibujo.
+1. Computes the **joint bounding box** of all strokes.
+2. Scales: `contain` = `min(dispW/w, dispH/h)` (preserves aspect ratio);
+   `fill` = independent per-axis scale (stretches).
+3. Centers on the canvas.
+4. `margin` (5% by default) reserves breathing room around the drawing.
 
-Gracias a esto puedes definir un sólido en un espacio de diseño propio
-(centrado en el origen, tamaño arbitrario) y dejarlo perfectamente encuadrado.
+Thanks to this you can define a solid in its own design space (centered at
+the origin, arbitrary size) and have it perfectly framed.
 
-## 5. Modo `freehand`
+## 5. `freehand` mode
 
-`mode: "freehand"` no usa generadores: los `strokes` se pasan tal cual (con
-`fit` opcional). Es el modo para dibujos libres o para reutilizar geometría
-generada fuera del DSL.
+`mode: "freehand"` does not use generators: `strokes` are passed as-is (with
+optional `fit`). It is the mode for free drawings or for reusing geometry
+generated outside the DSL.
 
-## 6. Ejemplos
+## 6. Examples
+
+2D examples for the `paint_draw` tool:
 
 ```jsonc
-// Estrella de 5 puntas centrada, 200 px de radio exterior
+// Centered 5-point star, 200 px outer radius
 { "mode": "generator", "generators": [
     { "kind": "starPolygon", "cx": 400, "cy": 300, "outerRadius": 200, "innerRadius": 80, "points": 5 }
 ] }
 
-// Espiral logarítmica de 4 vueltas
+// 4-turn logarithmic spiral
 { "mode": "generator", "generators": [
     { "kind": "logarithmicSpiral", "cx": 500, "cy": 400, "growth": 1.15, "turns": 4, "scale": 4 }
 ] }
 
-// Mosaico 10×8 de círculos (laberinto) en un lienzo 1920×1080
+// 10×8 circle mosaic (labyrinth) on a 1920×1080 canvas
 { "mode": "generator", "fit": "none", "generators": [
     { "kind": "grid", "x": 60, "y": 60, "width": 1800, "height": 960, "cols": 10, "rows": 8,
       "shape": "circle", "radius": 6 }
 ] }
 
-// Tesseract en perspectiva, encuadrado automáticamente
+// Several generators in one call (composition)
+{ "mode": "generator", "fit": "contain", "generators": [
+    { "kind": "circle", "cx": 0, "cy": 0, "radius": 120 },
+    { "kind": "starPolygon", "cx": 0, "cy": 0, "outerRadius": 90, "innerRadius": 40, "points": 6 }
+] }
+```
+
+3D examples for the `paint_draw_3d` tool:
+
+```jsonc
+// Tesseract in perspective, automatically framed
 { "mode": "generator", "fit": "contain", "generators": [
     { "kind": "solid", "solid": "tesseract", "size": 150,
       "rotX": -25, "rotY": 30, "projection": "perspective" }
 ] }
 
-// Nudo toroidal (2,3): el clásico nudo de trébol
+// (2,3) torus knot: the classic trefoil
 { "mode": "generator", "fit": "contain", "generators": [
     { "kind": "torusKnot", "p": 2, "q": 3, "radius": 90, "tubeRadius": 30, "steps": 400 }
 ] }
 
-// Jarrón por revolución de un perfil
+// Vase by revolving a profile
 { "mode": "generator", "fit": "contain", "generators": [
     { "kind": "revolution", "segments": 24, "profile": [
         { "x": 20, "y": -120 }, { "x": 90, "y": -80 }, { "x": 60, "y": -40 },
@@ -222,24 +256,26 @@ generada fuera del DSL.
     ] }
 ] }
 
-// Gran icosaedro con las caras pentagrama visibles
+// Great icosahedron with visible pentagram faces
 { "mode": "generator", "fit": "contain", "generators": [
     { "kind": "solid", "solid": "greatIcosahedron", "starFaces": true, "size": 140 }
 ] }
 
-// Varios generadores en una llamada (composición)
+// Several 3D generators in one call (composition)
 { "mode": "generator", "fit": "contain", "generators": [
-    { "kind": "circle", "cx": 0, "cy": 0, "radius": 120 },
-    { "kind": "starPolygon", "cx": 0, "cy": 0, "outerRadius": 90, "innerRadius": 40, "points": 6 }
+    { "kind": "torus", "majorRadius": 100, "tubeRadius": 35 },
+    { "kind": "solid", "solid": "cube", "size": 60 }
 ] }
 ```
 
-## 7. Dónde está cada pieza
+## 7. Where each piece lives
 
-| Pieza | Archivo |
+| Piece | File |
 |---|---|
-| Esquemas zod + traducción DSL→strokes | `src/infrastructure/mcp/operations/paint-draw.operation.ts` |
-| Figuras 2D puras, grid, dots, fit, boundingBox | `src/domain/figures.ts` |
-| Sólidos, rotaciones, proyección, toro, nudo, revolución, wireframe | `src/domain/solids.ts` |
-| Tipos del dominio (Stroke, Point2D, PaintPort…) | `src/domain/drawing.ts` |
-| Ejecución Win32 (drag, teclas, coordenadas) | `src/infrastructure/win32/paint.ts` + `process.ts` |
+| zod schemas + DSL→strokes translation (2D) | `src/infrastructure/mcp/operations/paint-draw.operation.ts` |
+| zod schemas + translation (3D) | `src/infrastructure/mcp/operations/paint-draw-3d.operation.ts` |
+| Shared logic (canvas fit, provenance, verification) | `src/infrastructure/mcp/operations/draw-shared.ts` |
+| Pure 2D figures, grid, dots, fit, boundingBox | `src/domain/figures.ts` |
+| Solids, rotations, projection, torus, knot, revolution, wireframe | `src/domain/solids.ts` |
+| Domain types (Stroke, Point2D, PaintPort…) | `src/domain/drawing.ts` |
+| Win32 execution (drag, keys, coordinates, KeyTips) | `src/infrastructure/win32/paint.ts` + `process.ts` |

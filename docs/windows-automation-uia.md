@@ -1,144 +1,143 @@
-# Windows Automation (UIA) con PowerShell: guía y descubrimientos
+# Windows Automation (UIA) with PowerShell: guide and discoveries
 
-Este documento explica cómo funciona UI Automation, qué dependencias necesita,
-cómo está construido el puente PowerShell de este repositorio
-(`scripts/paint-uia.ps1`) y registra **todo lo descubierto empíricamente**
-durante el desarrollo (entorno de prueba: Paint 11.2605.71.0, Windows 11,
-idioma español).
-
----
-
-## Índice
-
-1. [Qué es UI Automation](#1-que-es-ui-automation)
-2. [Dependencias](#2-dependencias)
-3. [El árbol de accesibilidad](#3-el-arbol-de-accesibilidad)
-4. [Patrones (patterns)](#4-patrones-patterns)
-5. [runtimeId y localización de elementos](#5-runtimeid-y-localizacion-de-elementos)
-6. [Cómo funciona el puente del repositorio](#6-como-funciona-el-puente-del-repositorio)
-7. [El lado servidor (Node.js)](#7-el-lado-servidor-nodejs)
-8. [Bitácora de descubrimientos](#8-bitacora-de-descubrimientos)
-9. [Referencias](#9-referencias)
+This document explains how UI Automation works, what dependencies it needs,
+how this repository's PowerShell bridge is built
+(`scripts/paint-uia-bridge.ps1`) and records **everything discovered
+empirically** during development (test environment: Paint 11.2605.71.0,
+Windows 11, Spanish language).
 
 ---
 
-## 1. Qué es UI Automation
+## Table of contents
 
-UI Automation (UIA) es el framework de accesibilidad de Windows (desde Vista).
-Cada control expone un **elemento de automatización** (un "peer") que describe
-su rol, su nombre y los **patrones** de comportamiento que soporta. El mismo
-árbol que usa el Narrador (lector de pantalla) es el que usamos para
-automatizar: si un control es accesible para un usuario ciego, es
-automatizable con código.
+1. [What UI Automation is](#1-what-ui-automation-is)
+2. [Dependencies](#2-dependencies)
+3. [The accessibility tree](#3-the-accessibility-tree)
+4. [Patterns](#4-patterns)
+5. [runtimeId and element lookup](#5-runtimeid-and-element-lookup)
+6. [How the repository's bridge works](#6-how-the-repositorys-bridge-works)
+7. [The server side (Node.js)](#7-the-server-side-nodejs)
+8. [Discovery log](#8-discovery-log)
+9. [References](#9-references)
 
-Puntos clave:
+---
 
-- Es una API **COM** con envoltura .NET: en PowerShell usamos los tipos del
-  ensamblado `UIAutomationClient` (namespace `Windows.Automation`).
-- Es **independiente del framework del control**: Win32 clásico, WinForms,
-  WPF, XAML/UWP (WinUI) y web (Chrome/Edge) exponen peers UIA.
-- Hay dos modelos de consumo: **cliente** (nosotros: leemos el árbol y
-  operamos patrones) y **proveedor** (el control: implementa peers).
+## 1. What UI Automation is
 
-## 2. Dependencias
+UI Automation (UIA) is Windows' accessibility framework (since Vista).
+Every control exposes an **automation element** (a "peer") describing its
+role, its name and the **patterns** of behavior it supports. The same tree
+used by Narrator (the screen reader) is the one we use to automate: if a
+control is accessible to a blind user, it is automatable with code.
 
-| Dependencia | Qué aporta | ¿Hay que instalarla? |
+Key points:
+
+- It is a **COM** API with a .NET wrapper: in PowerShell we use the types of
+  the `UIAutomationClient` assembly (namespace `Windows.Automation`).
+- It is **independent of the control's framework**: classic Win32, WinForms,
+  WPF, XAML/UWP (WinUI) and web (Chrome/Edge) expose UIA peers.
+- There are two consumption models: **client** (us: we read the tree and
+  operate patterns) and **provider** (the control: it implements peers).
+
+## 2. Dependencies
+
+| Dependency | What it provides | Does it need installing? |
 |---|---|---|
-| PowerShell 5.1 | El host de scripts | Viene con Windows |
-| .NET Framework 4.8 | CLR donde corren los ensamblados UIA | Viene con Windows 11 |
-| `UIAutomationClient.dll` | Tipos de cliente: `AutomationElement`, patrones | En el GAC; se carga con `Add-Type -AssemblyName UIAutomationClient` |
-| `UIAutomationTypes.dll` | Enums y tipos de soporte (`TreeScope`, `Condition`…) | Ídem |
-| `user32.dll` | `EnumWindows`, `SendInput`, `SetCursorPos`, `ClientToScreen`… | Sistema |
+| PowerShell 5.1 | The script host | Ships with Windows |
+| .NET Framework 4.8 | The CLR where UIA assemblies run | Ships with Windows 11 |
+| `UIAutomationClient.dll` | Client types: `AutomationElement`, patterns | In the GAC; load with `Add-Type -AssemblyName UIAutomationClient` |
+| `UIAutomationTypes.dll` | Enums and support types (`TreeScope`, `Condition`…) | Same |
+| `user32.dll` | `EnumWindows`, `SendInput`, `SetCursorPos`, `ClientToScreen`… | System |
 
-Carga mínima:
+Minimal loading:
 
 ```powershell
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 ```
 
-> Nota: el paquete NuGet `UIAutomationClient` solo existe para las versiones
-> .NET Core 3.0+/5+; en PowerShell 5.1 los ensamblados ya están en el GAC de
-> .NET Framework y no hace falta descargar nada.
+> Note: the NuGet package `UIAutomationClient` only exists for .NET Core
+> 3.0+/5+; in PowerShell 5.1 the assemblies are already in the .NET
+> Framework GAC and there is nothing to download.
 
-## 3. El árbol de accesibilidad
+## 3. The accessibility tree
 
-El escritorio es la raíz (`AutomationElement.RootElement`). Cada ventana es un
-hijo; dentro, paneles, botones, campos, etc. Se recorre con `FindAll` /
-`FindFirst` indicando un `TreeScope`:
+The desktop is the root (`AutomationElement.RootElement`). Each window is a
+child; inside it, panels, buttons, fields, etc. It is traversed with
+`FindAll` / `FindFirst` specifying a `TreeScope`:
 
-| TreeScope | Alcance |
+| TreeScope | Scope |
 |---|---|
-| `Element` | Solo el elemento mismo |
-| `Children` | Hijos directos |
-| `Descendants` | Todo el subárbol (el más usado) |
-| `Subtree` | Elemento + descendientes |
+| `Element` | Only the element itself |
+| `Children` | Direct children |
+| `Descendants` | The whole subtree (the most used) |
+| `Subtree` | Element + descendants |
 
 ```powershell
 $desktop = [Windows.Automation.AutomationElement]::RootElement
 
-# 1) Localizar la ventana de Paint desde el escritorio
+# 1) Locate the Paint window from the desktop
 $cond = New-Object Windows.Automation.PropertyCondition(
   [Windows.Automation.AutomationElement]::ClassNameProperty, 'MSPaintApp')
 $paintEl = $desktop.FindFirst([Windows.Automation.TreeScope]::Children, $cond)
 
-# 2) O bien, directo desde un HWND
+# 2) Or directly from an HWND
 $paintEl = [Windows.Automation.AutomationElement]::FromHandle($paintHwnd)
 
-# 3) Todos los controles del árbol
+# 3) All controls in the tree
 $all = $paintEl.FindAll([Windows.Automation.TreeScope]::Descendants,
                         [Windows.Automation.Condition]::TrueCondition)
 ```
 
-Condiciones útiles:
+Useful conditions:
 
-- `TrueCondition` — todo (recorrer todo el árbol).
-- `PropertyCondition(propiedad, valor)` — filtrar por `AutomationIdProperty`,
+- `TrueCondition` — everything (traverse the whole tree).
+- `PropertyCondition(property, value)` — filter by `AutomationIdProperty`,
   `NameProperty`, `ControlTypeProperty`, `ClassNameProperty`…
-- `AndCondition` / `OrCondition` — combinar.
+- `AndCondition` / `OrCondition` — combine.
 
-Las propiedades se leen de `.Current`:
+Properties are read from `.Current`:
 
 ```powershell
 $e = $all.Item(0)
-$e.Current.Name                    # texto visible
-$e.Current.AutomationId            # id estable del control
+$e.Current.Name                    # visible text
+$e.Current.AutomationId            # stable control id
 $e.Current.ControlType.ProgrammaticName   # 'Button', 'Edit', 'Spinner'...
-$e.Current.ClassName               # clase interna del framework
+$e.Current.ClassName               # framework internal class
 $e.Current.FrameworkId             # 'XAML', 'Win32'...
 $e.Current.IsEnabled / .IsOffscreen
-$e.Current.BoundingRectangle       # rect en píxeles de pantalla
-$e.Current.NativeWindowHandle      # HWND (si tiene)
+$e.Current.BoundingRectangle       # rect in screen pixels
+$e.Current.NativeWindowHandle      # HWND (if any)
 ```
 
-## 4. Patrones (patterns)
+## 4. Patterns
 
-Un patrón es una interfaz que implementa el peer para exponer un
-comportamiento. Se obtiene con `GetCurrentPattern(Patron::Pattern)` y se
-convierte al tipo .NET correspondiente.
+A pattern is an interface the peer implements to expose a behavior. It is
+obtained with `GetCurrentPattern(Patron::Pattern)` and converted to the
+corresponding .NET type.
 
-| Patrón | Se usa en | Métodos clave |
+| Pattern | Used in | Key methods |
 |---|---|---|
-| `InvokePattern` | Botones | `Invoke()` |
-| `ValuePattern` | TextBox/Edit, ComboBox | `SetValue(texto)`, `Current.Value` |
+| `InvokePattern` | Buttons | `Invoke()` |
+| `ValuePattern` | TextBox/Edit, ComboBox | `SetValue(text)`, `Current.Value` |
 | `RangeValuePattern` | Sliders, Spinners, NumberBox | `SetValue(double)`, `Current.Value` |
-| `SelectionItemPattern` | RadioButtons, items de listas | `Select()`, `Current.IsSelected` |
+| `SelectionItemPattern` | RadioButtons, list items | `Select()`, `Current.IsSelected` |
 | `TogglePattern` | ToggleButtons, checkboxes | `Toggle()` |
-| `ExpandCollapsePattern` | Menús, SplitButtons, ComboBox | `Expand()`, `Collapse()` |
+| `ExpandCollapsePattern` | Menus, SplitButtons, ComboBox | `Expand()`, `Collapse()` |
 | `TextPattern` | TextBlocks | `DocumentRange.GetText(-1)` |
 | `ScrollPattern` | ScrollViewers | `Scroll()`, `SetScrollPercent()` |
-| `WindowPattern` | Ventanas/popups | `Close()`, `SetWindowVisualState()` |
+| `WindowPattern` | Windows/popups | `Close()`, `SetWindowVisualState()` |
 
-Ejemplo — escribir en un campo (el caso del lienzo):
+Example — writing into a field (the canvas case):
 
 ```powershell
 $vp = $edit.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
 $vp.SetValue('1920')
 ```
 
-Ejemplo — invocar un botón con fallbacks (si no hay Invoke, probar
-SelectionItem; si no, LegacyIAccessible). Esto es exactamente lo que hace
-`Invoke-Element` del puente:
+Example — invoking a button with fallbacks (if there is no Invoke, try
+SelectionItem; if not, LegacyIAccessible). This is exactly what the
+bridge's `Invoke-Element` does:
 
 ```powershell
 function Invoke-UiaElement($element) {
@@ -155,159 +154,173 @@ function Invoke-UiaElement($element) {
 }
 ```
 
-> Regla práctica: el patrón que soporta el control aparece en
-> `GetSupportedPatterns()`. Antes de operar, lee `supportedPatterns` y elige.
+> Rule of thumb: the pattern a control supports appears in
+> `GetSupportedPatterns()`. Before operating, read `supportedPatterns` and
+> choose.
 
-## 5. runtimeId y localización de elementos
+## 5. runtimeId and element lookup
 
-`AutomationElement.GetRuntimeId()` devuelve un array de enteros que identifica
-unívocamente al elemento en el árbol **dentro de la misma sesión/proceso de
-UI Automation**. No es estable entre reinicios, pero sí dentro de una
-operación: por eso el puente lo usa como "dirección" del elemento.
+`AutomationElement.GetRuntimeId()` returns an array of integers that
+uniquely identifies the element in the tree **within the same UI
+Automation session/process**. It is not stable across restarts, but it is
+within one operation: that is why the bridge uses it as the element's
+"address".
 
-Estrategia del puente (`Find-ElementByRuntimeId`): recorre el árbol completo
-desde la raíz comparando runtimeIds hasta encontrar el target, y luego opera
-sobre él. Así el servidor Node puede "recordar" un elemento de un escaneo
-anterior (ej. el Edit del ancho) sin depender de nombres localizados.
+Bridge strategy (`Find-ElementByRuntimeId`): it traverses the full tree from
+the root comparing runtimeIds until it finds the target, and then operates
+on it. That way the Node server can "remember" an element from a previous
+scan (e.g. the width Edit) without relying on localized names.
 
-## 6. Cómo funciona el puente del repositorio
+## 6. How the repository's bridge works
 
-`scripts/paint-uia.ps1` es un script **stateless**: cada invocación es un
-proceso PowerShell nuevo que recibe una acción + payload JSON en base64 y
-devuelve JSON por stdout.
+`scripts/paint-uia-bridge.ps1` supports two modes:
+
+- **One-shot** (default): each invocation is a new PowerShell process that
+  receives an action + JSON payload in base64 and returns JSON on stdout.
+- **Persistent server** (`-Server`): it reads JSONL commands from stdin and
+  writes JSONL responses on stdout, amortizing the `powershell.exe` startup
+  (~1–2 s) between commands. This is the mode the Node server uses.
 
 ```
 node (automation-client.ts)
-  │  spawn("powershell", ["-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass",
-  │        "-File","scripts/paint-uia.ps1", acción, base64(payload)])
+  │  spawn("powershell", ["-NoProfile","-NonInteractive","-ExecutionPolicy",
+  │        "Bypass","-File","scripts/paint-uia-bridge.ps1","-Server"])
   ▼
-scripts/paint-uia.ps1
-  ├─ ConvertFrom-Base64Json → payload
-  ├─ Get-PaintRootElement   → localiza la ventana (processId | className | título)
-  └─ según acción:
-       ├─ inventory   → Build-Inventory (BFS con profundidad máx.) o
+scripts/paint-uia-bridge.ps1 (persistent process)
+  │  for each JSON line on stdin { id, action, payload }:
+  ├─ Get-PaintRootElement → locate the window (processId | className | title)
+  └─ depending on action:
+       ├─ inventory   → Build-Inventory (BFS with max depth) or
        │                Get-DesktopChildrenInventory (scope desktop-children)
        ├─ invoke      → Find-ElementByRuntimeId + Invoke-Element (fallbacks)
        └─ set-value   → Find-ElementByRuntimeId + Set-ElementValue
-                        (Value → RangeValue → descendiente con ValuePattern)
+                        (Value → RangeValue → descendant with ValuePattern)
 ```
 
-Decisiones de diseño:
+Design decisions:
 
-- **Base64 + JSON**: evita problemas de encoding en argv de Windows
-  (los nombres con acentos de Paint español lo justifican).
-- **Actions atómicas**: una acción por proceso; el servidor decide la
-  secuencia (abrir popup → escanear → escribir → confirmar → verificar).
-- **Scope `desktop-children`**: variante del inventario que enumera los
-  top-levels del escritorio (usado para inspeccionar popups que SÍ son
-  ventanas separadas).
-- **Profundidad máxima** (`maxDepth`): el árbol XAML de Paint es profundo
-  (el ribbon relevante vive a profundidad 7–8); el escaneo completo es caro,
-  por eso se limita.
-- **BoundingRectangle opcional**: activarlo para diagnóstico
-  (`includeBoundingRectangles`) porque duplica el costo del JSON.
+- **Base64 + JSON**: avoids encoding problems in Windows argv (the accented
+  names of Spanish Paint justify it). In server mode the JSON goes through
+  stdin and base64 is not needed.
+- **Persistent server**: the `PersistentPowerShellBridge` class in
+  `automation-client.ts` keeps a single PowerShell process and correlates
+  responses with `id`. It eliminated the ~1–2 s per call cost that the
+  one-shot mode paid.
+- **Atomic actions**: one action per command; the server decides the
+  sequence (open popup → scan → write → confirm → verify).
+- **`desktop-children` scope**: an inventory variant that enumerates the
+  desktop's top-levels (used to inspect popups that ARE separate windows).
+- **Maximum depth** (`maxDepth`): Paint's XAML tree is deep (the relevant
+  ribbon lives at depth 7–8); a full scan is expensive, hence the limit.
+- **Optional BoundingRectangle**: enable it only for diagnostics
+  (`includeBoundingRectangles`) because it doubles the JSON cost.
 
-## 7. El lado servidor (Node.js)
+## 7. The server side (Node.js)
 
-- `src/infrastructure/windows/automation/automation-client.ts` — spawn del
-  puente, parseo, normalización y errores tipados.
-- `automation-types.ts` — contratos: `AutomationInventoryPayload`,
-  `AutomationInvokePayload`, `AutomationSetValuePayload` (nuevo en la
-  feature `paint_canvas`).
-- `src/infrastructure/win32/process.ts` — el complemento **no-UIA**:
-  `EnumWindows`, `SendInput` (teclas/ratón), `SetCursorPos`, `ClientToScreen`,
-  `SetForegroundWindow`, maximizar, lanzar procesos y AUMID.
-- División de responsabilidades:
-  - **UIA** → leer estado, operar controles (diálogos, ribbons, zoom).
-  - **Win32 directo** → dibujar (drag de mouse), teclas, foco, ventanas.
+- `src/infrastructure/windows/automation/automation-client.ts` — bridge
+  spawn, parsing, normalization and typed errors.
+- `automation-types.ts` — contracts: `AutomationInventoryPayload`,
+  `AutomationInvokePayload`, `AutomationSetValuePayload` (new in the
+  `paint_canvas` feature).
+- `src/infrastructure/win32/process.ts` — the **non-UIA** complement:
+  `EnumWindows`, `SendInput` (keys/mouse), `SetCursorPos`, `ClientToScreen`,
+  `SetForegroundWindow`, maximize, process launch and AUMID.
+- Responsibility split:
+  - **UIA** → read state, operate controls (dialogs, ribbons, zoom).
+  - **Direct Win32** → drawing (mouse drag), keys, focus, windows.
 
-## 8. Bitácora de descubrimientos
+## 8. Discovery log
 
-Todo lo siguiente fue comprobado empíricamente en Paint 11.2605.71.0
-(español, Windows 11). Fecha: agosto 2026.
+Everything below was verified empirically in Paint 11.2605.71.0 (Spanish,
+Windows 11). Date: August 2026.
 
-### 8.1 El diálogo "Propiedades de la imagen" es un popup in-window
+### 8.1 The "Image Properties" dialog is an in-window popup
 
-- `Ctrl+E` sí abre el diálogo, pero como **Popup XAML dentro del árbol de la
-  ventana** (`ControlType = Window`, `ClassName = Popup`, `FrameworkId =
-  XAML`), no como ventana top-level. `EnumWindows` NO lo ve.
-- El tree UIA de la ventana contiene el popup a poca profundidad (visible con
-  `maxDepth ≥ 6`), pero sus controles (NumberBox, radios) viven a
-  profundidad 4–5 bajo el popup.
-- Identificadores verificados: spinners `WidthNumberBox` / `HeightNumberBox`
-  (con `RangeValuePattern`), edits internos `InputBox` (con `ValuePattern`),
-  botón `PrimaryButton` ("Aceptar"), `CloseButton` ("Cancelar"), grupo
-  `Unidades` con radios `Pulgadas` / `Centímetros` / `Píxeles`.
+- `Ctrl+E` does open the dialog, but as a **XAML Popup inside the window's
+  tree** (`ControlType = Window`, `ClassName = Popup`, `FrameworkId =
+  XAML`), not as a top-level window. `EnumWindows` does NOT see it.
+- The window's UIA tree contains the popup at shallow depth (visible with
+  `maxDepth ≥ 6`), but its controls (NumberBox, radios) live at depth 4–5
+  under the popup.
+- Verified identifiers: spinners `WidthNumberBox` / `HeightNumberBox`
+  (with `RangeValuePattern`), internal edits `InputBox` (with
+  `ValuePattern`), button `PrimaryButton` ("OK"), `CloseButton` ("Cancel"),
+  group `Units` with `Inches` / `Centimeters` / `Pixels` radios.
 
-### 8.2 Mojibake en nombres UIA (acentos)
+### 8.2 Mojibake in UIA names (accents)
 
-- El radio "Píxeles" llega con nombre `P�xeles` (U+FFFD por encoding). La
-  comparación por `AutomationId` no sufre este problema; la comparación por
-  nombre SÍ. Solución: sanitizar con
-  `name -replace '[^\x20-\x7e]',''` y comparar subcadenas ASCII
-  (p. ej. `xeles`).
+- The "Pixels" radio arrives with name `P�xeles` (U+FFFD due to encoding).
+  Comparison by `AutomationId` does not suffer this; comparison by name
+  does. Solution: sanitize with `name -replace '[^\x20-\x7e]',''` and
+  compare ASCII substrings (e.g. `xeles`).
 
-### 8.3 El ribbon SÍ se expone por UIA (a profundidad ≥ 7)
+### 8.3 The ribbon IS exposed via UIA (at depth ≥ 7)
 
-- Contrario a notas viejas del código, el ribbon del Paint moderno es
-  accesible: `PencilTool`, `EraserTool`, `BrushesSplitButton`, `CropButton`,
+- Contrary to old code notes, the modern Paint ribbon is accessible:
+  `PencilTool`, `EraserTool`, `BrushesSplitButton`, `CropButton`,
   `RotateDropdown`, `Flip`, `ZoomValuesComboBox`, `ZoomSliderControl`,
-  grupos `Selección`, `Imagen`, `Herramientas`, `Pinceles`, `Formas`,
-  `Colores`, `Copilot`, `Capas`.
-- El control de estado "usando la herramienta … en el lienzo"
-  (`AutomationId = image`) es un Group dentro del `scrollViewer`.
+  groups `Selection`, `Image`, `Tools`, `Brushes`, `Shapes`, `Colors`,
+  `Copilot`, `Layers`.
+- The status control "using the tool … on the canvas"
+  (`AutomationId = image`) is a Group inside the `scrollViewer`.
 
-### 8.4 El tamaño lógico del lienzo
+### 8.4 The logical canvas size
 
-- El único elemento que resuelve el tamaño lógico es
-  `CanvasSizeTextBlock` (Text, `TextPattern`), texto del estilo
-  `"500 × 500píxeles"`. El driver lo usa para escalar coordenadas de dibujo
-  y para `fit`.
-- `Ajustar a la ventana` (botón "Fit to window"), `Zoom` (ComboBox editable),
-  `Alejar`/`Acercar` y `ZoomSliderControl` también están expuestos.
+- The only element that resolves the logical size is
+  `CanvasSizeTextBlock` (Text, `TextPattern`), text like
+  `"500 × 500píxeles"`. The driver uses it to scale drawing coordinates
+  and for `fit`.
+- `Fit to window` (button), `Zoom` (editable ComboBox),
+  `Zoom out`/`Zoom in` and `ZoomSliderControl` are also exposed.
 
-### 8.5 mspaint.exe es un stub UWP
+### 8.5 mspaint.exe is a UWP stub
 
-- Lanzar `mspaint.exe` puede quedarse sin ventana (proceso vivo, sin HWND).
-- Respaldo probado: `ShellExecuteW` con AUMID
-  `shell:AppsFolder\Microsoft.Paint_8wekyb3d8bbwe!App`, y matar el stub.
-- El proceso UWP crea además ventanas ocultas tituladas
-  "Sin título - Default" (hosts de popups); filtrar por visibilidad y clase.
+- Launching `mspaint.exe` may end up with no window (live process, no HWND).
+- Tested fallback: `ShellExecuteW` with AUMID
+  `shell:AppsFolder\Microsoft.Paint_8wekyb3d8bbwe!App`, and killing the
+  stub.
+- The UWP process also creates hidden windows titled "Untitled - Default"
+  (popup hosts); filter by visibility and class.
 
-### 8.6 Atajos
+### 8.6 Shortcuts
 
-- Funcionan: `Ctrl+E` (Propiedades de la imagen), `Ctrl+W` (Redimensionar y
-  sesgar), `Ctrl+Shift+X` (Recortar a selección), `Ctrl+A`, `Ctrl+Z`,
-  `Ctrl+N` (nuevo documento — **hereda el último tamaño de lienzo**).
-- NO funcionan: los atajos clásicos de herramientas (B/P/E). La selección de
-  herramienta se hace clicando el ribbon en coordenadas fijas.
-- `Ctrl + +` / `Ctrl + -` ajustan el grosor de la brocha en pasos de 1 px.
+- Work: `Ctrl+E` (Image Properties), `Ctrl+W` (Resize and skew),
+  `Ctrl+Shift+X` (Crop to selection), `Ctrl+A`, `Ctrl+Z`,
+  `Ctrl+N` (new document — **inherits the last canvas size**).
+- The classic tool shortcuts (B/P/E) do NOT work as a bare key, but the
+  **ribbon KeyTips do**: press and release `Alt` and then the letter selects
+  the tool (e.g. `B` = Brush, `P` = Pencil) without depending on
+  coordinates or InvokePattern (which on split-buttons only opens the
+  flyout). The driver uses it in `pressKeyTip()` /
+  `pressKeyTipSequence()` (`src/infrastructure/win32/process.ts`).
+- `Ctrl + +` / `Ctrl + -` adjust the brush thickness in 1 px steps.
 
-### 8.7 Escribir valores en NumberBox
+### 8.7 Writing values into a NumberBox
 
-- `ValuePattern.SetValue` sobre el Edit interno (`InputBox`) funciona y
-  reemplaza el texto; `RangeValuePattern` está disponible en el Spinner padre.
-- El puente implementa la cadena de fallback
-  Value → RangeValue → descendiente con ValuePattern (feature `paint_canvas`,
-  ver `Set-ElementValue` en `scripts/paint-uia.ps1`).
+- `ValuePattern.SetValue` on the internal Edit (`InputBox`) works and
+  replaces the text; `RangeValuePattern` is available on the parent Spinner.
+- The bridge implements the fallback chain Value → RangeValue → descendant
+  with ValuePattern (feature `paint_canvas`, see `Set-ElementValue` in
+  `scripts/paint-uia-bridge.ps1`).
 
-### 8.8 Rendimiento
+### 8.8 Performance
 
-- Cada llamada al puente paga el arranque de `powershell.exe` (~1–2 s).
-  Los escaneos `inventory` con `maxDepth: 8` dominan el tiempo de las
-  operaciones de diagnóstico (`paint_debug_ui`, `paint_canvas`). El dibujo
-  (`paint_draw`) no escanea: va por SendInput y es rápido.
-- Optimización pendiente posible: proceso PowerShell persistente (worker
-  por stdin/stdout) en `automation-client.ts`.
+- The **one-shot** mode paid ~1–2 s of `powershell.exe` startup per call.
+  Not anymore: `automation-client.ts` uses a **persistent PowerShell
+  process** (`PersistentPowerShellBridge`, bridge `-Server` mode) that
+  amortizes the startup between JSONL commands.
+- `inventory` scans with `maxDepth: 8` still dominate the time of the
+  diagnostic operations (`paint_debug_ui`, `paint_canvas`). Drawing
+  (`paint_draw`) does not scan: it goes through SendInput and is fast.
 
-## 9. Referencias
+## 9. References
 
-- Documentación oficial: "UI Automation" (learn.microsoft.com/windows/win32/winauto/entry-uiauto-win32)
-- Clases .NET: `System.Windows.Automation.AutomationElement` (docs .NET Framework)
-- Código fuente de este repo:
-  - `scripts/paint-uia.ps1` — puente UIA (inventory / invoke / set-value)
-  - `src/infrastructure/windows/automation/` — cliente Node del puente
-  - `src/infrastructure/win32/process.ts` — Win32 (teclado, ratón, ventanas)
-  - `src/infrastructure/win32/user32.ts` — constantes VK y P/Invoke
-  - `src/paint/discovery/` — resolución del lienzo desde el inventario
-- Tutorial complementario: [`tutorial-paint-powershell.md`](./tutorial-paint-powershell.md)
+- Official documentation: "UI Automation" (learn.microsoft.com/windows/win32/winauto/entry-uiauto-win32)
+- .NET classes: `System.Windows.Automation.AutomationElement` (.NET Framework docs)
+- Source code of this repo:
+  - `scripts/paint-uia-bridge.ps1` — UIA bridge (inventory / invoke / set-value)
+  - `src/infrastructure/windows/automation/` — Node client of the bridge
+  - `src/infrastructure/win32/process.ts` — Win32 (keyboard, mouse, windows)
+  - `src/infrastructure/win32/user32.ts` — VK constants and P/Invoke
+  - `src/paint/discovery/` — canvas resolution from the inventory
+- Complementary tutorial: [`tutorial-paint-powershell.md`](./tutorial-paint-powershell.md)
