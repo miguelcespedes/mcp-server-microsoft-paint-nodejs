@@ -730,6 +730,25 @@ export function pressKeyCombo(modifiers: number[], vk: number): void {
   }
 }
 
+/**
+ * Ejecuta una "KeyTip" de la cinta: pulsa y SUELTA Alt (a diferencia de
+ * pressKeyCombo, que lo mantiene presionado como modificador) para activar
+ * las guías de acceso de teclado de Windows, y luego pulsa la letra
+ * indicada como una tecla independiente. A diferencia de un atajo directo
+ * de una sola letra, esto cubre CUALQUIER control de la cinta (incluidos
+ * split-buttons como "Pinceles"/Brocha, cuyo InvokePattern vía UI
+ * Automation solo abre su flyout en vez de aplicar la herramienta): la
+ * KeyTip sí invoca la acción primaria real, igual que un usuario
+ * presionando Alt y luego la letra.
+ */
+export async function pressKeyTip(vk: number, delayMs = 250): Promise<void> {
+  sendKeyboardEvent(win32.VK_MENU, false);
+  sendKeyboardEvent(win32.VK_MENU, true);
+  await sleep(delayMs);
+  sendKeyboardEvent(vk, false);
+  sendKeyboardEvent(vk, true);
+}
+
 /** Presiona el botón izquierdo del mouse. */
 export function mouseButtonDown(): void {
   sendMouseInput({ flags: win32.MOUSEEVENTF_LEFTDOWN });

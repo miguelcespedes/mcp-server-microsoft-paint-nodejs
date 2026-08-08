@@ -173,16 +173,15 @@ async function maximizePaintWindow(hwnd: bigint): Promise<void> {
 // Selección de herramienta
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// La Brocha es, a efectos visuales, un Lápiz con 3px de grosor por defecto
-// (confirmado empíricamente) — no hay razón para pelear con el split-button
-// "Pinceles" de la cinta, cuyo Invoke() vía UI Automation abre su flyout de
-// estilos en vez de aplicar la herramienta. En vez de eso, SIEMPRE se
-// selecciona Lápiz y se ajusta el grosor cuando se pidió el equivalente a
-// Brocha (ver ensureDrawingToolActive).
-//
-// La selección usa el atajo de teclado "P" (confirmado con el tooltip del
-// botón), no coordenadas de pantalla: es independiente del idioma, tema o
-// posición de la ventana/monitor.
+// El Lápiz se selecciona con su atajo directo de una sola letra ("P",
+// confirmado con el tooltip del botón). La Brocha, en cambio, vive en un
+// split-button de la cinta ("Pinceles") cuyo InvokePattern vía UI
+// Automation solo abre su flyout de estilos en vez de aplicarla; para esa
+// sí hace falta la KeyTip de la cinta (Alt suelto, luego "B", confirmado
+// interactivamente), que invoca la acción primaria real del control tal
+// como lo haría un usuario. Ninguna de las dos depende de coordenadas de
+// pantalla: son independientes del idioma, tema o posición de la
+// ventana/monitor.
 
 async function selectPencilTool(hwnd: bigint): Promise<void> {
   await proc.ensureWindowReady(hwnd, { foreground: true, maximize: false });
@@ -190,20 +189,29 @@ async function selectPencilTool(hwnd: bigint): Promise<void> {
   await proc.sleep(300);
 }
 
+async function selectBrushTool(hwnd: bigint): Promise<void> {
+  await proc.ensureWindowReady(hwnd, { foreground: true, maximize: false });
+  await proc.pressKeyTip(win32.VK_B);
+  await proc.sleep(300);
+}
+
 /**
  * Determina la herramienta activa a partir del nombre accesible del grupo
- * del canvas (p. ej. "Usando la herramienta Lápiz en el lienzo"). Paint
+ * del canvas (p. ej. "Usando la herramienta Brocha en el lienzo"). Paint
  * expone esto de forma fiable via UIA; es más barato y robusto que asumir
  * un estado por defecto que ediciones previas (crop, verifyDraw, uso
  * manual) pueden haber cambiado silenciosamente.
  */
 function activeToolFromCanvasName(
   elementName: string | undefined,
-): "pencil" | "other" {
+): "brush" | "pencil" | "other" {
   if (!elementName) {
     return "other";
   }
   const lower = elementName.toLowerCase();
+  if (lower.includes("brocha") || lower.includes("brush")) {
+    return "brush";
+  }
   if (lower.includes("lápiz") || lower.includes("lapiz") || lower.includes("pencil")) {
     return "pencil";
   }
@@ -211,10 +219,10 @@ function activeToolFromCanvasName(
 }
 
 /**
- * Asegura que el Lápiz (única herramienta de dibujo que se selecciona de
- * forma fiable) esté realmente activo antes de arrastrar, en vez de confiar
- * en que nadie la cambió desde la última operación. Sin esto, un
- * crop/selección previo deja "Selección" activa y el siguiente
+ * Asegura que la herramienta de dibujo correcta (Brocha o Lápiz según
+ * options.skipToolSelection) esté realmente activa antes de arrastrar, en
+ * vez de confiar en que nadie la cambió desde la última operación. Sin
+ * esto, un crop/selección previo deja "Selección" activa y el siguiente
  * drawPolyline/drawFreehand solo crea una marquesina de selección: ningún
  * píxel de tinta real, pero la llamada reporta éxito igualmente (el bug que
  * motivó este fix).
@@ -222,27 +230,17 @@ function activeToolFromCanvasName(
 async function ensureDrawingToolActive(
   hwnd: bigint,
   canvasElementName: string | undefined,
+  options: DrawOptions,
 ): Promise<void> {
-  if (activeToolFromCanvasName(canvasElementName) === "pencil") {
+  const desired = options.skipToolSelection === false ? "pencil" : "brush";
+  if (activeToolFromCanvasName(canvasElementName) === desired) {
     return;
   }
-  await selectPencilTool(hwnd);
-}
-
-/** Grosor con el que la Brocha dibuja por defecto en Paint (Lápiz + 3px). */
-const BRUSH_EQUIVALENT_THICKNESS = 3;
-
-/**
- * Resuelve el grosor a aplicar: el explícito si se pidió uno, o el
- * equivalente visual de la Brocha (3px) cuando no se pidió el Lápiz "puro"
- * (skipToolSelection === false). Con el Lápiz puro, no tocar el grosor deja
- * el trazo fino por defecto de Paint.
- */
-function resolveEffectiveThickness(options: DrawOptions): number | undefined {
-  if (options.thickness) {
-    return options.thickness;
+  if (desired === "pencil") {
+    await selectPencilTool(hwnd);
+  } else {
+    await selectBrushTool(hwnd);
   }
-  return options.skipToolSelection === false ? undefined : BRUSH_EQUIVALENT_THICKNESS;
 }
 
 /**
@@ -719,10 +717,9 @@ async function createPaintWindow(
 
       const mappedPoints = mapPointsIntoDrawingRegion(points, canvas, "points");
       const clientPoints = canvasPointsToClientPoints(canvas, mappedPoints, "points");
-      await ensureDrawingToolActive(window.hwnd, canvas.elementName);
-      const effectiveThickness = resolveEffectiveThickness(options);
-      if (effectiveThickness) {
-        await setBrushThickness(window.hwnd, effectiveThickness);
+      await ensureDrawingToolActive(window.hwnd, canvas.elementName, options);
+      if (options.thickness) {
+        await setBrushThickness(window.hwnd, options.thickness);
       }
 
       // Conversión a coordenadas absolutas de pantalla (una sola vez).
@@ -821,10 +818,9 @@ async function createPaintWindow(
           `strokes[${strokeIndex}].points`,
         ),
       );
-      await ensureDrawingToolActive(window.hwnd, canvas.elementName);
-      const effectiveThickness = resolveEffectiveThickness(options);
-      if (effectiveThickness) {
-        await setBrushThickness(window.hwnd, effectiveThickness);
+      await ensureDrawingToolActive(window.hwnd, canvas.elementName, options);
+      if (options.thickness) {
+        await setBrushThickness(window.hwnd, options.thickness);
       }
 
       // Conversión a coordenadas absolutas de pantalla (una sola vez).

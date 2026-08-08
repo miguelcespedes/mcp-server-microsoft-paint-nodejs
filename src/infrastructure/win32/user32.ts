@@ -157,7 +157,9 @@ export const KEYEVENTF_KEYUP = 0x0002;
 
 /** Códigos de tecla virtual comunes. */
 export const VK_CONTROL = 0x11;
+export const VK_MENU = 0x12; // Alt
 export const VK_A = 0x41;
+export const VK_B = 0x42;
 export const VK_DELETE = 0x2e;
 export const VK_HOME = 0x24;
 export const VK_RETURN = 0x0d;
