@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "main": "dist/server.js",
+  "license": "MIT",
   "scripts": {
     "dev": "tsx src/server.ts",
     "build": "tsc",
