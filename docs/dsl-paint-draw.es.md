@@ -38,20 +38,26 @@ delegan el dibujo al puerto `PaintPort` (adaptador Win32 → `SendInput`):
 
 **Pipeline completo** (modo generator):
 
-```
-generators (DSL)
-   │  generatorToStrokes() / generatorToPoints()   (paint-draw.operation.ts)
-   ▼
-Point2D[][]  (strokes: listas de puntos del lienzo)
-   │  fitStrokesToCanvas() → fitStrokes()           (draw-shared.ts → figures.ts)
-   ▼
-strokes escalados/centrados al lienzo lógico
-   │  drawFreehand()/drawPolyline()                  (Win32 paint.ts)
-   ▼
-canvasPointsToClientPoints → clientToScreen
-   │  dragPolyline()                                 (process.ts)
-   ▼
-SendInput: mouseMoveAbsolute + LEFTDOWN/LEFTUP      (user32.dll)
+```mermaid
+sequenceDiagram
+    participant MCP as Cliente MCP
+    participant OP as Operación paint_draw
+    participant DOM as Dominio (figures / solids)
+    participant PNT as Win32 paint.ts
+    participant PRC as process.ts (SendInput)
+    participant APP as Microsoft Paint
+
+    MCP->>OP: JSON de generators
+    OP->>DOM: generatorToStrokes() / generatorToPoints()
+    DOM-->>OP: Point2D[][] strokes
+    OP->>OP: fitStrokesToCanvas() (fit: contain / fill)
+    OP->>PNT: drawFreehand(strokes)
+    loop por cada stroke
+        PNT->>PRC: dragPolyline(puntos)
+        PRC->>PRC: lienzo a cliente a pantalla
+        PRC->>APP: SendInput: moveAbsolute + LEFTDOWN / LEFTUP
+    end
+    APP-->>OP: stroke renderizado
 ```
 
 Regla central: **cada arista/polilínea es un stroke = un arrastre del mouse**.
@@ -100,11 +106,15 @@ Se definen **centrados en el origen** (coordenadas negativas incluidas), se
 rotan en el orden **X → Y → Z** y se proyectan a 2D. Por eso se recomienda
 `fit: "contain"`: escala y centra el modelo en el lienzo sin calcular a mano.
 
+```mermaid
+flowchart LR
+    V[Vértices 3D] --> R[rotate3D: rotX a rotY a rotZ]
+    R --> P[projectPoint]
+    P --> S[Strokes 2D: una arista = un stroke]
+    S --> F[fit: contain / fill]
 ```
-vértices 3D → rotate3D (rotX→rotY→rotZ) → projectPoint → strokes 2D
-   proyección: ortho (f=1) o perspective (f = d / max(d - z, 0.1))
-   cada arista = stroke de 2 puntos
-```
+
+Proyección: `ortho` (f = 1) o `perspective` (f = d / max(d − z, 0.1)).
 
 | Parámetro | Significado |
 |---|---|

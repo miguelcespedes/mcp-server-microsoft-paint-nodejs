@@ -155,6 +155,15 @@ function Invoke-UiaElement($element) {
 }
 ```
 
+Cadena de fallback que usa `Invoke-Element` cuando el elemento no soporta
+InvokePattern:
+
+```mermaid
+flowchart LR
+    I[InvokePattern] --> S[SelectionItemPattern]
+    S --> L[LegacyIAccessiblePattern]
+```
+
 > Regla práctica: el patrón que soporta el control aparece en
 > `GetSupportedPatterns()`. Antes de operar, lee `supportedPatterns` y elige.
 
@@ -180,20 +189,26 @@ anterior (ej. el Edit del ancho) sin depender de nombres localizados.
   respuestas JSONL por stdout, amortizando el arranque de `powershell.exe`
   (~1–2 s) entre comandos. Es el modo que usa el servidor Node.
 
-```
-node (automation-client.ts)
-  │  spawn("powershell", ["-NoProfile","-NonInteractive","-ExecutionPolicy",
-  │        "Bypass","-File","scripts/paint-uia-bridge.ps1","-Server"])
-  ▼
-scripts/paint-uia-bridge.ps1 (proceso persistente)
-  │  por cada línea JSON de stdin { id, action, payload }:
-  ├─ Get-PaintRootElement → localiza la ventana (processId | className | título)
-  └─ según action:
-       ├─ inventory   → Build-Inventory (BFS con profundidad máx.) o
-       │                Get-DesktopChildrenInventory (scope desktop-children)
-       ├─ invoke      → Find-ElementByRuntimeId + Invoke-Element (fallbacks)
-       └─ set-value   → Find-ElementByRuntimeId + Set-ElementValue
-                        (Value → RangeValue → descendiente con ValuePattern)
+```mermaid
+sequenceDiagram
+    participant N as Node automation-client.ts
+    participant B as Puente PowerShell (-Server)
+    participant U as UI Automation (Paint)
+
+    N->>B: spawn powershell -File scripts/paint-uia-bridge.ps1 -Server
+    loop por comando
+        N->>B: {id, action, payload} JSONL (stdin)
+        B->>U: Get-PaintRootElement (localiza la ventana)
+        alt action = inventory
+            B->>U: Escaneo BFS con maxDepth
+        else action = invoke
+            B->>U: Find-ElementByRuntimeId + Invoke-Element
+        else action = set-value
+            B->>U: Find-ElementByRuntimeId + Set-ElementValue
+        end
+        U-->>B: resultado
+        B-->>N: {id, ok, result} JSONL (stdout)
+    end
 ```
 
 Decisiones de diseño:

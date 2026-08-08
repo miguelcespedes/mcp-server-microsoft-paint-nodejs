@@ -38,20 +38,26 @@ and delegate drawing to the `PaintPort` (Win32 adapter → `SendInput`):
 
 **Full pipeline** (generator mode):
 
-```
-generators (DSL)
-   │  generatorToStrokes() / generatorToPoints()   (paint-draw.operation.ts)
-   ▼
-Point2D[][]  (strokes: lists of canvas points)
-   │  fitStrokesToCanvas() → fitStrokes()           (draw-shared.ts → figures.ts)
-   ▼
-strokes scaled/centered to the logical canvas
-   │  drawFreehand()/drawPolyline()                  (Win32 paint.ts)
-   ▼
-canvasPointsToClientPoints → clientToScreen
-   │  dragPolyline()                                 (process.ts)
-   ▼
-SendInput: mouseMoveAbsolute + LEFTDOWN/LEFTUP      (user32.dll)
+```mermaid
+sequenceDiagram
+    participant MCP as MCP client
+    participant OP as paint_draw operation
+    participant DOM as Domain (figures / solids)
+    participant PNT as Win32 paint.ts
+    participant PRC as process.ts (SendInput)
+    participant APP as Microsoft Paint
+
+    MCP->>OP: generators JSON
+    OP->>DOM: generatorToStrokes() / generatorToPoints()
+    DOM-->>OP: Point2D[][] strokes
+    OP->>OP: fitStrokesToCanvas() (fit: contain / fill)
+    OP->>PNT: drawFreehand(strokes)
+    loop per stroke
+        PNT->>PRC: dragPolyline(points)
+        PRC->>PRC: canvas to client to screen
+        PRC->>APP: SendInput: moveAbsolute + LEFTDOWN / LEFTUP
+    end
+    APP-->>OP: rendered stroke
 ```
 
 Central rule: **each edge/polyline is a stroke = one mouse drag**.
@@ -101,11 +107,15 @@ included), rotated in **X → Y → Z** order and projected to 2D. That is why
 `fit: "contain"` is recommended: it scales and centers the model on the
 canvas with no manual math.
 
+```mermaid
+flowchart LR
+    V[3D vertices] --> R[rotate3D: rotX to rotY to rotZ]
+    R --> P[projectPoint]
+    P --> S[2D strokes: one edge = one stroke]
+    S --> F[fit: contain / fill]
 ```
-3D vertices → rotate3D (rotX→rotY→rotZ) → projectPoint → 2D strokes
-   projection: ortho (f=1) or perspective (f = d / max(d - z, 0.1))
-   each edge = a 2-point stroke
-```
+
+Projection: `ortho` (f = 1) or `perspective` (f = d / max(d − z, 0.1)).
 
 | Parameter | Meaning |
 |---|---|

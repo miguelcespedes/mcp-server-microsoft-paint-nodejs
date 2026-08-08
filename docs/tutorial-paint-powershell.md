@@ -294,6 +294,12 @@ Start-Sleep -Milliseconds 1000
 Real drawing does not use UIA: it goes through `SendInput` (absolute
 position + button events), converting canvas → client → screen coordinates.
 
+```mermaid
+flowchart LR
+    L[Canvas logical] --> C[Client coordinates]
+    C --> S[Screen coordinates]
+```
+
 ### 6.1 Converting coordinates
 
 ```powershell
@@ -421,6 +427,13 @@ function Invoke-PaintDrag {
 ```
 
 Typical flow:
+
+```mermaid
+flowchart LR
+    A[Get-PaintWindow] --> B[Set-PaintCanvasSize 1920 x 1080]
+    B --> C[Get-PaintCanvasSize verify]
+    C --> D[Invoke-PaintDrag]
+```
 
 ```powershell
 $paint = Get-PaintWindow

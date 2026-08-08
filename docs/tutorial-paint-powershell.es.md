@@ -294,6 +294,12 @@ Start-Sleep -Milliseconds 1000
 El dibujo real no usa UIA: va por `SendInput` (posición absoluta + eventos
 de botón), convirtiendo coordenadas del lienzo → cliente → pantalla.
 
+```mermaid
+flowchart LR
+    L[Lienzo lógico] --> C[Coordenadas cliente]
+    C --> S[Coordenadas de pantalla]
+```
+
 ### 6.1 Convertir coordenadas
 
 ```powershell
@@ -422,6 +428,13 @@ function Invoke-PaintDrag {
 ```
 
 Flujo típico:
+
+```mermaid
+flowchart LR
+    A[Get-PaintWindow] --> B[Set-PaintCanvasSize 1920 x 1080]
+    B --> C[Get-PaintCanvasSize verificación]
+    C --> D[Invoke-PaintDrag]
+```
 
 ```powershell
 $paint = Get-PaintWindow
