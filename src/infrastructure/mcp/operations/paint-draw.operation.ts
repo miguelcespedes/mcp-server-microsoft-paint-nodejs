@@ -741,9 +741,9 @@ export function registerPaintDraw(
         "centrados en el origen con rotaciones y proyección ortográfica o " +
         "perspectiva; cada arista es un stroke. Opciones: 'tool' elige Brocha o " +
         "Lápiz, 'fit' (contain/fill) escala y centra el dibujo dentro del lienzo " +
-        "(recomendado para los sólidos 3D). El resultado devuelve la geometría " +
-        "del canvas y el bounding box del contenido dibujado (canvasBounds) para " +
-        "autoverificación.",
+        "(recomendado para los sólidos 3D). 'canvas' redimensiona el lienzo antes " +
+        "de dibujar. El resultado devuelve la geometría del canvas y el bounding box " +
+        "del contenido dibujado (canvasBounds) para autoverificación.",
       inputSchema: {
         mode: drawModeSchema.default("generator"),
         tool: toolSchema,
@@ -779,6 +779,13 @@ export function registerPaintDraw(
         generators: generatorListSchema.optional(),
         stepDelayMs: stepDelayMsSchema,
         origin: pointSchema.optional().describe("Origen global (offset) aplicado a todas las coordenadas de los generadores. Default: {0,0}."),
+        canvas: z
+          .object({
+            width: z.number().int().min(1).max(99999).describe("Ancho del lienzo en píxeles."),
+            height: z.number().int().min(1).max(99999).describe("Alto del lienzo en píxeles."),
+          })
+          .optional()
+          .describe("Redimensiona el lienzo ANTES de dibujar. Útil para preparar canvas a medida en una sola llamada."),
       },
     },
     async (args) => {
@@ -786,6 +793,13 @@ export function registerPaintDraw(
       let outcome: "success" | "error" = "error";
       try {
         let window = await paint.createWindow();
+
+        // P3: explicit canvas resize before drawing
+        if (args.canvas) {
+          await controller.setCanvasSize(args.canvas.width, args.canvas.height);
+          window = await paint.createWindow();
+        }
+
         const drawOptions = {
           stepDelayMs: args.stepDelayMs,
           skipToolSelection: args.tool === "pencil" ? false : undefined,
