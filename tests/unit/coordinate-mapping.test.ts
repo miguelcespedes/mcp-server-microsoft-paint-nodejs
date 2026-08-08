@@ -1,19 +1,23 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { canvasPointsToClientPoints } from "../../src/paint/discovery/canvas-resolver.js";
+import {
+  canvasPointsToClientPoints,
+  ensurePointsInsideCanvas,
+} from "../../src/paint/discovery/canvas-resolver.js";
 import type { PaintCanvas } from "../../src/domain/drawing.js";
 
+const makeCanvas = (overrides: Partial<PaintCanvas> = {}): PaintCanvas => ({
+  source: "automation",
+  width: 800,
+  height: 600,
+  logicalWidth: 1920,
+  logicalHeight: 1080,
+  clientOrigin: { x: 100, y: 50 },
+  screenOrigin: { x: 0, y: 0 },
+  ...overrides,
+});
+
 describe("infrastructure/win32/paint - coordinate mapping", () => {
-  const makeCanvas = (overrides: Partial<PaintCanvas> = {}): PaintCanvas => ({
-    source: "automation",
-    width: 800,
-    height: 600,
-    logicalWidth: 1920,
-    logicalHeight: 1080,
-    clientOrigin: { x: 100, y: 50 },
-    screenOrigin: { x: 0, y: 0 },
-    ...overrides,
-  });
 
   describe("canvasPointsToClientPoints - uniform zoom (100%)", () => {
     it("maps logical to client 1:1 when canvas fits", () => {
@@ -72,6 +76,30 @@ describe("infrastructure/win32/paint - coordinate mapping", () => {
         canvasPointsToClientPoints(canvas, [{ x: 100, y: 100 }], "test");
       });
     });
+  });
+});
+
+describe("ensurePointsInsideCanvas", () => {
+  const canvas = makeCanvas({ width: 800, height: 600, logicalWidth: 800, logicalHeight: 600 });
+
+  it("accepts valid points", () => {
+    assert.doesNotThrow(() =>
+      ensurePointsInsideCanvas(canvas, [{ x: 10, y: 20 }, { x: 799, y: 599 }], "points"),
+    );
+  });
+
+  it("rejects out-of-bounds points", () => {
+    assert.throws(
+      () => ensurePointsInsideCanvas(canvas, [{ x: 750, y: 20 }, { x: 800, y: 20 }], "points"),
+      /outside the resolved Paint canvas/,
+    );
+  });
+
+  it("rejects negative coordinates", () => {
+    assert.throws(
+      () => ensurePointsInsideCanvas(canvas, [{ x: -1, y: 20 }], "points"),
+      /outside the resolved Paint canvas/,
+    );
   });
 });
 
