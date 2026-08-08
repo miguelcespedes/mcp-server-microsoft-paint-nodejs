@@ -117,7 +117,12 @@ export async function autoResizeCanvasForAspect(
   if (aspectDiff <= 0.15) {
     return window;
   }
-  const maxDim = Math.max(window.canvas.logicalWidth, window.canvas.logicalHeight);
+  // Fijo (no derivado del canvas ACTUAL): la ventana de Paint se reutiliza
+  // entre llamadas, así que basar esto en window.canvas.logicalWidth/Height
+  // hace que el tamaño crezca sin control call tras call si una llamada
+  // previa ya lo había agrandado (cada auto-ajuste usaba el resultado del
+  // anterior como nueva base).
+  const maxDim = 1200;
   let newWidth: number;
   let newHeight: number;
   if (contentAspect >= 1) {

@@ -4,12 +4,19 @@ import type { PaintPort } from "../../../domain/drawing.js";
 import type { PaintController } from "../../../paint/paint-controller.js";
 import {
   arrowPolyline,
+  causeEffectLabelAnchors,
   causeEffectStrokes,
+  chartLabelAnchors,
   chartStrokes,
+  flowLabelAnchors,
   flowStrokes,
+  mapLabelAnchors,
   mapStrokes,
+  portraitLabelAnchor,
   portraitStrokes,
+  timelineLabelAnchors,
   timelineStrokes,
+  type TextAnchor,
 } from "../../../domain/napkin.js";
 import { notifyOperationFinished } from "../../win32/process.js";
 import { toolErrorResult } from "../errors.js";
@@ -47,6 +54,8 @@ const relativeMarkerSchema = z.object({
   y: z.number().min(0).max(1).describe("Posición vertical relativa dentro de la región (0–1)."),
 });
 
+const labelTextSchema = z.string().min(1).max(40);
+
 const napkinGeneratorSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("portrait"),
@@ -54,6 +63,7 @@ const napkinGeneratorSchema = z.discriminatedUnion("kind", [
     y: relativeIntSchema("Feet Y").describe("Posición de los pies (nivel de suelo)."),
     scale: positiveIntSchema("Head radius").default(20).describe("Radio de la cabeza (define la escala). Default: 20."),
     pose: poseSchema,
+    label: labelTextSchema.optional().describe("Nombre/etiqueta bajo la figura (opcional)."),
   }),
   z.object({
     kind: z.literal("arrow"),
@@ -83,7 +93,15 @@ const napkinGeneratorSchema = z.discriminatedUnion("kind", [
       .max(0.9)
       .default(0.3)
       .describe("Fracción del espacio de cada barra usada como separación. Default: 0.3."),
-  }),
+    labels: z
+      .array(labelTextSchema)
+      .max(30)
+      .optional()
+      .describe("Una etiqueta por barra, en el mismo orden que 'values' (opcional)."),
+  }).refine(
+    (chart) => !chart.labels || chart.labels.length === chart.values.length,
+    { message: "labels debe tener la misma longitud que values.", path: ["labels"] },
+  ),
   z.object({
     kind: z.literal("map"),
     x: relativeIntSchema("X"),
@@ -101,7 +119,15 @@ const napkinGeneratorSchema = z.discriminatedUnion("kind", [
       .min(1)
       .optional()
       .describe("Radio del marcador (estrella). Default: min(width,height)*0.06."),
-  }),
+    labels: z
+      .array(labelTextSchema)
+      .max(50)
+      .optional()
+      .describe("Una etiqueta por marcador, en el mismo orden que 'markers' (opcional)."),
+  }).refine(
+    (map) => !map.labels || map.labels.length === map.markers.length,
+    { message: "labels debe tener la misma longitud que markers.", path: ["labels"] },
+  ),
   z.object({
     kind: z.literal("timeline"),
     x: relativeIntSchema("X"),
@@ -109,7 +135,15 @@ const napkinGeneratorSchema = z.discriminatedUnion("kind", [
     length: positiveIntSchema("Length"),
     events: z.number().int().min(0).max(100).describe("Número de eventos, espaciados uniformemente."),
     tickHeight: positiveIntSchema("Tick height").default(14).describe("Alto de cada marca de evento. Default: 14."),
-  }),
+    labels: z
+      .array(labelTextSchema)
+      .max(100)
+      .optional()
+      .describe("Una etiqueta por evento, en el mismo orden (opcional)."),
+  }).refine(
+    (timeline) => !timeline.labels || timeline.labels.length === timeline.events,
+    { message: "labels debe tener la misma longitud que events.", path: ["labels"] },
+  ),
   z.object({
     kind: z.literal("flow"),
     x: relativeIntSchema("X"),
@@ -118,7 +152,15 @@ const napkinGeneratorSchema = z.discriminatedUnion("kind", [
     boxHeight: positiveIntSchema("Box height"),
     gap: positiveIntSchema("Gap").describe("Separación horizontal entre cajas."),
     steps: z.number().int().min(1).max(20).describe("Número de pasos (cajas) en secuencia."),
-  }),
+    labels: z
+      .array(labelTextSchema)
+      .max(20)
+      .optional()
+      .describe("Una etiqueta por caja, en el mismo orden (opcional)."),
+  }).refine(
+    (flow) => !flow.labels || flow.labels.length === flow.steps,
+    { message: "labels debe tener la misma longitud que steps.", path: ["labels"] },
+  ),
   z.object({
     kind: z.literal("causeEffect"),
     x: relativeIntSchema("X"),
@@ -126,6 +168,8 @@ const napkinGeneratorSchema = z.discriminatedUnion("kind", [
     width: positiveIntSchema("Width"),
     height: positiveIntSchema("Height"),
     trend: z.enum(["up", "down"]).default("up").describe("Dirección de la tendencia mostrada. Default: up."),
+    xLabel: labelTextSchema.optional().describe("Rótulo del eje X (opcional)."),
+    yLabel: labelTextSchema.optional().describe("Rótulo del eje Y (opcional)."),
   }),
 ]);
 
@@ -135,7 +179,9 @@ const napkinGeneratorListSchema = z
   .max(50)
   .describe("Lista de elementos del codex a dibujar (máximo 50).");
 
-function napkinGeneratorToStrokes(generator: z.infer<typeof napkinGeneratorSchema>) {
+type NapkinGenerator = z.infer<typeof napkinGeneratorSchema>;
+
+function napkinGeneratorToStrokes(generator: NapkinGenerator) {
   switch (generator.kind) {
     case "portrait":
       return portraitStrokes(generator);
@@ -151,6 +197,30 @@ function napkinGeneratorToStrokes(generator: z.infer<typeof napkinGeneratorSchem
       return flowStrokes(generator);
     case "causeEffect":
       return causeEffectStrokes(generator);
+  }
+}
+
+/** Roam casi nunca dibuja una figura del codex sin su texto — ver anclas puras en napkin.ts. */
+function napkinGeneratorToLabelAnchors(generator: NapkinGenerator, fontSize: number): TextAnchor[] {
+  switch (generator.kind) {
+    case "portrait":
+      return generator.label ? [portraitLabelAnchor(generator, generator.label, fontSize)] : [];
+    case "arrow":
+      return [];
+    case "chart":
+      return generator.labels ? chartLabelAnchors(generator, generator.labels, fontSize) : [];
+    case "map":
+      return generator.labels ? mapLabelAnchors(generator, generator.labels, fontSize) : [];
+    case "timeline":
+      return generator.labels ? timelineLabelAnchors(generator, generator.labels, fontSize) : [];
+    case "flow":
+      return generator.labels ? flowLabelAnchors(generator, generator.labels, fontSize) : [];
+    case "causeEffect":
+      return causeEffectLabelAnchors(
+        generator,
+        { xLabel: generator.xLabel, yLabel: generator.yLabel },
+        fontSize,
+      );
   }
 }
 
@@ -171,9 +241,12 @@ export function registerPaintNapkin(
         "(dónde — región + marcadores), 'timeline' (cuándo — línea + eventos), 'flow' " +
         "(cómo — cajas conectadas por flechas), 'causeEffect' (por qué — ejes + curva " +
         "de tendencia). 'arrow' es un primitivo transversal (señalar, conectar) usado " +
-        "también internamente por 'flow' y 'portrait' (pose pointing). Sin 'origin': " +
-        "cada elemento ya define su propia posición vía x/y. 'fit' (recomendado: " +
-        "'contain') escala y centra la composición dentro del lienzo.",
+        "también internamente por 'flow' y 'portrait' (pose pointing). La mayoría de " +
+        "los kinds aceptan 'label'/'labels' (texto real insertado con la herramienta de " +
+        "texto de Paint, alineado automáticamente con la figura y afectado por 'fit' " +
+        "igual que el dibujo) porque en el libro una figura sin su texto no comunica " +
+        "nada. Sin 'origin': cada elemento ya define su propia posición vía x/y. 'fit' " +
+        "(recomendado: 'contain') escala y centra la composición dentro del lienzo.",
       inputSchema: {
         tool: toolSchema,
         fit: fitSchema.default("contain"),
@@ -182,6 +255,23 @@ export function registerPaintNapkin(
         generators: napkinGeneratorListSchema.optional(),
         stepDelayMs: stepDelayMsSchema,
         thickness: thicknessSchema.optional().describe("Grosor de la brocha/lápiz en píxeles (1–50)."),
+        fontSize: z
+          .number()
+          .int()
+          .min(6)
+          .max(72)
+          .default(14)
+          .describe(
+            "Tamaño de fuente (px) para todas las etiquetas de la llamada. Default: 14. " +
+              "Paint solo ofrece un set fijo de tamaños en su cinta (8,9,10,11,12,14,16,18," +
+              "20,22,24,26,28,36,48,...); se aplica el más cercano al pedido.",
+          ),
+        fontFamily: z.string().default("Arial").describe("Familia de fuente para las etiquetas. Default: Arial."),
+        labelColor: z
+          .string()
+          .regex(/^#[0-9a-fA-F]{6}$/)
+          .default("#000000")
+          .describe("Color hex (#RRGGBB) de las etiquetas. Default: negro."),
         canvas: canvasSizeSchema
           .optional()
           .describe("Redimensiona el lienzo ANTES de dibujar. Útil para preparar canvas a medida en una sola llamada."),
@@ -207,7 +297,9 @@ export function registerPaintNapkin(
 
         const generators = args.generators ?? [args.generator!];
 
-        if (generators.length > 0) {
+        // Si el llamador ya pidió un tamaño explícito de canvas, se respeta
+        // tal cual — no lo pisamos con el ajuste automático de aspecto.
+        if (!args.canvas && generators.length > 0) {
           const { allStrokes: aspectStrokes } = buildStrokesWithProvenance(
             generators,
             napkinGeneratorToStrokes,
@@ -220,15 +312,52 @@ export function registerPaintNapkin(
           napkinGeneratorToStrokes,
         );
         strokeProvenance = provenance;
-        const strokes = fitStrokesToCanvas(
-          allStrokes.map((points) => ({ points })),
+
+        // Las anclas de texto se calculan en el mismo espacio de diseño que
+        // las strokes y se fit-transforman EN LA MISMA llamada (como
+        // strokes de dos puntos: esquina superior-izquierda e inferior-
+        // derecha del cuadro), para que 'fit'/'origin' las muevan y
+        // ESCALEN exactamente igual que al dibujo. insertText valida AMBAS
+        // esquinas contra el canvas (ver paint.ts) — si solo se
+        // fit-transformara la posición y no el tamaño, un auto-ajuste de
+        // aspecto que achica el canvas puede dejar la esquina
+        // inferior-derecha del cuadro fuera de rango.
+        const labelAnchors = generators.flatMap((g) => napkinGeneratorToLabelAnchors(g, args.fontSize));
+        const anchorCornerStrokes = labelAnchors.map((anchor) => [
+          { x: anchor.x, y: anchor.y },
+          { x: anchor.x + anchor.width, y: anchor.y + anchor.height },
+        ]);
+
+        const combined = fitStrokesToCanvas(
+          [...allStrokes, ...anchorCornerStrokes].map((points) => ({ points })),
           args.fit,
           window.canvas,
         );
+        const strokes = combined.slice(0, allStrokes.length);
+        const fittedAnchorCorners = combined.slice(allStrokes.length);
+
         const result = strokes.length === 1
           ? await window.drawPolyline(strokes[0].points, drawOptions)
           : await window.drawFreehand(strokes, drawOptions);
         outcome = "success";
+
+        for (let i = 0; i < labelAnchors.length; i += 1) {
+          const anchor = labelAnchors[i];
+          const [topLeft, bottomRight] = fittedAnchorCorners[i].points;
+          await window.insertText({
+            x: topLeft.x,
+            y: topLeft.y,
+            width: Math.max(1, bottomRight.x - topLeft.x),
+            height: Math.max(1, bottomRight.y - topLeft.y),
+            content: anchor.content,
+            fontSize: args.fontSize,
+            fontFamily: args.fontFamily,
+            bold: false,
+            italic: false,
+            color: args.labelColor,
+            stepDelayMs: args.stepDelayMs,
+          });
+        }
 
         const verification = await verifyDrawnRegion(result.canvas, args.verify);
 
@@ -237,7 +366,8 @@ export function registerPaintNapkin(
             {
               type: "text",
               text:
-                `Napkin sketch completed with ${generators.length} element(s) on ` +
+                `Napkin sketch completed with ${generators.length} element(s) ` +
+                `(${labelAnchors.length} label(s)) on ` +
                 `${result.canvas.logicalWidth}x${result.canvas.logicalHeight} canvas ` +
                 `(${formatCanvasBounds(strokes)}) in "${result.windowTitle}". ` +
                 verificationMessage(verification),
@@ -246,6 +376,7 @@ export function registerPaintNapkin(
           structuredContent: {
             ...result,
             generators,
+            labelCount: labelAnchors.length,
             verified: verification.hasInk,
             verificationDetail: verification,
           },

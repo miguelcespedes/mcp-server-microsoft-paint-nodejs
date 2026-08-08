@@ -2,7 +2,10 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   arrowPolyline,
+  chartLabelAnchors,
   chartStrokes,
+  flowLabelAnchors,
+  portraitLabelAnchor,
   stickFigure,
 } from "../../src/domain/napkin.js";
 
@@ -76,6 +79,41 @@ describe("domain/napkin - Dan Roam codex primitives", () => {
     it("returns just the axis for an empty values array", () => {
       const strokes = chartStrokes({ x: 0, y: 0, width: 200, height: 100, values: [] });
       assert.equal(strokes.length, 1);
+    });
+  });
+
+  describe("label anchors", () => {
+    it("portraitLabelAnchor centers the label under the figure's x", () => {
+      const anchor = portraitLabelAnchor({ x: 100, y: 300 }, "Ana", 14);
+      const center = anchor.x + anchor.width / 2;
+      assert.ok(Math.abs(center - 100) <= 1);
+      assert.ok(anchor.y > 300, "label should sit below the feet (y increases downward)");
+      assert.equal(anchor.content, "Ana");
+    });
+
+    it("chartLabelAnchors returns one anchor per label, in bar order", () => {
+      const anchors = chartLabelAnchors(
+        { x: 0, y: 0, width: 300, height: 100, values: [1, 2, 3] },
+        ["Ene", "Feb", "Mar"],
+        14,
+      );
+      assert.equal(anchors.length, 3);
+      assert.deepStrictEqual(anchors.map((a) => a.content), ["Ene", "Feb", "Mar"]);
+      // Anchors should be in increasing x order (left to right, matching the bars).
+      assert.ok(anchors[0].x < anchors[1].x);
+      assert.ok(anchors[1].x < anchors[2].x);
+    });
+
+    it("flowLabelAnchors centers each label inside its box", () => {
+      const anchors = flowLabelAnchors(
+        { x: 0, y: 0, boxWidth: 100, boxHeight: 50, gap: 20, steps: 2 },
+        ["Paso 1", "Paso 2"],
+        14,
+      );
+      assert.equal(anchors.length, 2);
+      const secondBoxX = 0 + 1 * (100 + 20);
+      const secondCenter = anchors[1].x + anchors[1].width / 2;
+      assert.ok(Math.abs(secondCenter - (secondBoxX + 50)) <= 2);
     });
   });
 });

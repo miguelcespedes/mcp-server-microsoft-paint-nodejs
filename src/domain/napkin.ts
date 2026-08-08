@@ -124,13 +124,15 @@ export function stickFigure(options: StickFigureOptions): Point2D[][] {
 
   // Brazos
   if (pose === "pointing") {
+    // Un solo brazo extendido señalando; se omite el otro a propósito
+    // (estilo minimalista de Roam — un segundo brazo corto "colgando" cerca
+    // del torso se lee visualmente como una marca suelta y desconectada).
     strokes.push(
       ...arrowPolyline({
         from: pt(x, shoulderY),
         to: pt(x + armLength * 1.4, shoulderY - R * 0.4),
         headSize: R * 0.5,
       }),
-      [pt(x, shoulderY), pt(x - R * 0.7, shoulderY + armLength * 0.8)],
     );
   } else if (pose === "thinking") {
     strokes.push(
@@ -320,4 +322,161 @@ export function causeEffectStrokes(options: CauseEffectOptions): Point2D[][] {
   }
   strokes.push(curvePoints);
   return strokes;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Etiquetas de texto: Roam casi nunca dibuja una figura del codex sin su
+// texto (una barra sin etiqueta, un mapa sin nombres, no comunican nada).
+// Estas funciones son puras: calculan DÓNDE va cada etiqueta según la misma
+// geometría que ya usan las funciones de arriba, pero no insertan texto —
+// eso requiere la ventana de Paint (efecto de I/O), y vive en la capa MCP
+// (paint-napkin.operation.ts), que llama a estas funciones y luego a
+// window.insertText por cada ancla devuelta.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface TextAnchor {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  content: string;
+}
+
+/** Estima el tamaño del cuadro de texto a partir del contenido y el tamaño de fuente. */
+function estimateTextBox(content: string, fontSize: number): { width: number; height: number } {
+  return {
+    width: Math.max(24, Math.round(content.length * fontSize * 0.62)),
+    height: Math.round(fontSize * 1.6),
+  };
+}
+
+/** Ancla centrada bajo los pies del monigote. */
+export function portraitLabelAnchor(
+  options: PortraitOptions,
+  label: string,
+  fontSize: number,
+): TextAnchor {
+  const { x, y } = options;
+  const box = estimateTextBox(label, fontSize);
+  return { x: Math.round(x - box.width / 2), y: y + 6, width: box.width, height: box.height, content: label };
+}
+
+/** Una ancla por barra, centrada justo debajo del eje horizontal. */
+export function chartLabelAnchors(
+  options: ChartOptions,
+  labels: string[],
+  fontSize: number,
+): TextAnchor[] {
+  const { x, y, width, height, values } = options;
+  const slot = width / values.length;
+  return labels.map((label, index) => {
+    const barCenterX = x + index * slot + slot / 2;
+    const box = estimateTextBox(label, fontSize);
+    return {
+      x: Math.round(barCenterX - box.width / 2),
+      y: y + height + 4,
+      width: box.width,
+      height: box.height,
+      content: label,
+    };
+  });
+}
+
+/** Una ancla por marcador, a la derecha del punto. */
+export function mapLabelAnchors(
+  options: MapOptions,
+  labels: string[],
+  fontSize: number,
+): TextAnchor[] {
+  const { x, y, width, height, markers } = options;
+  const markerRadius = options.markerRadius ?? Math.min(width, height) * 0.06;
+  return labels.map((label, index) => {
+    const marker = markers[index];
+    const box = estimateTextBox(label, fontSize);
+    return {
+      x: Math.round(x + marker.x * width + markerRadius + 4),
+      y: Math.round(y + marker.y * height - box.height / 2),
+      width: box.width,
+      height: box.height,
+      content: label,
+    };
+  });
+}
+
+/** Una ancla por evento, centrada arriba de cada marca. */
+export function timelineLabelAnchors(
+  options: TimelineOptions,
+  labels: string[],
+  fontSize: number,
+): TextAnchor[] {
+  const { x, y, length, events } = options;
+  const tickHeight = options.tickHeight ?? 14;
+  return labels.map((label, index) => {
+    const eventX = events === 1 ? x + length / 2 : x + (length * index) / (events - 1);
+    const box = estimateTextBox(label, fontSize);
+    return {
+      x: Math.round(eventX - box.width / 2),
+      y: Math.round(y - tickHeight / 2 - box.height - 4),
+      width: box.width,
+      height: box.height,
+      content: label,
+    };
+  });
+}
+
+/** Una ancla por caja, centrada dentro de cada una. */
+export function flowLabelAnchors(
+  options: FlowOptions,
+  labels: string[],
+  fontSize: number,
+): TextAnchor[] {
+  const { x, y, boxWidth, boxHeight, gap } = options;
+  return labels.map((label, index) => {
+    const boxX = x + index * (boxWidth + gap);
+    const box = estimateTextBox(label, fontSize);
+    return {
+      x: Math.round(boxX + boxWidth / 2 - box.width / 2),
+      y: Math.round(y + boxHeight / 2 - box.height / 2),
+      width: box.width,
+      height: box.height,
+      content: label,
+    };
+  });
+}
+
+export interface CauseEffectLabels {
+  xLabel?: string;
+  yLabel?: string;
+}
+
+/** Anclas para los rótulos de los ejes X e Y (0, 1 o 2 anclas según cuáles se pidan). */
+export function causeEffectLabelAnchors(
+  options: CauseEffectOptions,
+  labels: CauseEffectLabels,
+  fontSize: number,
+): TextAnchor[] {
+  const { x, y, width, height } = options;
+  const originY = y + height;
+  const anchors: TextAnchor[] = [];
+  if (labels.xLabel) {
+    const box = estimateTextBox(labels.xLabel, fontSize);
+    anchors.push({
+      x: Math.round(x + width - box.width),
+      y: Math.round(originY + 6),
+      width: box.width,
+      height: box.height,
+      content: labels.xLabel,
+    });
+  }
+  if (labels.yLabel) {
+    const box = estimateTextBox(labels.yLabel, fontSize);
+    anchors.push({
+      x: Math.round(x - box.width / 2),
+      y: Math.round(y - box.height - 4),
+      width: box.width,
+      height: box.height,
+      content: labels.yLabel,
+    });
+  }
+  return anchors;
 }
